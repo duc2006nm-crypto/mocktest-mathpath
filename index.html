@@ -460,15 +460,27 @@ function parseExamText(rawText){
     answerZoneText = text.slice(idx);
   }
 
-  /* Bản đồ số câu -> chữ cái đáp án, lấy từ vùng đáp án riêng (nếu có).
-     Hỗ trợ trắc nghiệm tới 6 phương án (A-F, VD đề Kangaroo/IKMC có 5 đáp án A-E), tiền tố
-     "Câu"/"Question" tùy chọn trước số thứ tự, và nhiều kiểu dấu phân cách (. ) - – — : /). */
+  /* Bản đồ số câu -> đáp án, lấy từ vùng đáp án riêng (nếu có). Ho tro toi da 10 phuong an
+     (A-J — du cho de Cambridge Listening Part ghep noi 8 lua chon A-H), tien to "Câu"/"Question"
+     tuy chon truoc so thu tu, va nhieu kieu dau phan cach (. ) - – — : /).
+     TACH RIENG 2 loai: answerMap (so cau -> 1 CHU CAI duy nhat, dung cho trac nghiem) va
+     shortAnswerMap (so cau -> CA CUM TU/SO, dung cho cau dien tu — VD dap an that "6-August",
+     "9-65" cua de Cambridge Listening Part 2 — TRUOC DAY bi bo qua hoan toan vi regex cu chi
+     nhan 1 ky tu A-F, khien 5 cau dien tu bien thanh tu luan khong dap an ma khong canh bao). */
   var answerMap = {};
+  var shortAnswerMap = {};
   if(answerZoneText){
-    var amRe = /(?:Câu|Cau|Question|Q)?\s*(\d{1,3})\s*[\.\)\-–—:\/]\s*([A-Fa-f])\b/gi;
+    var amRe = /(?:^|\n)\s*(?:Câu|Cau|Question|Q)?\s*(\d{1,3})\s*[\.\)\-–—:\/]\s*([^\n]+)/g;
     var m;
     while((m = amRe.exec(answerZoneText))){
-      answerMap[parseInt(m[1],10)] = m[2].toUpperCase();
+      var amNum = parseInt(m[1],10);
+      var amVal = m[2].trim();
+      var amLetterOnly = amVal.match(/^([A-Ja-j])$/);
+      if(amLetterOnly){
+        answerMap[amNum] = amLetterOnly[1].toUpperCase();
+      } else if(amVal){
+        shortAnswerMap[amNum] = amVal;
+      }
     }
   }
 
@@ -496,8 +508,8 @@ function parseExamText(rawText){
        Nhiều đề kiểu Kangaroo/IKMC có phương án là HÌNH ẢNH thuần (không có chữ), nên cần tách
        ảnh theo TỪNG DÒNG, không tách một lần cho cả câu như trước. */
     var rawLines = chunk.text.split('\n').map(function(l){return l.trim();}).filter(function(l){return l.length>0;});
-    var optRegex = /^([A-Fa-f])[\.\)]\s*(.*)$/;
-    var inlineAnsRegex = /(?:đáp\s*án|dap\s*an|answer)\s*[:\-]?\s*([A-Fa-f])\b/i;
+    var optRegex = /^([A-Ja-j])[\.\)]\s*(.*)$/;
+    var inlineAnsRegex = /(?:đáp\s*án|dap\s*an|answer)\s*[:\-]?\s*([A-Ja-j])\b/i;
     var answerLineRegex = /^(?:đáp\s*án|dap\s*an|answer)\s*[:\-]?\s*(.*)$/i;
     var bodyLines = [], options = {}, optionImages = {}, imageRefs = [];
     var inlineAnswerLetter = null, inlineShortAnswer = null;
@@ -537,7 +549,7 @@ function parseExamText(rawText){
       var alm = trimmed.match(answerLineRegex);
       if(alm && bodyLines.length>0){
         var rest = alm[1].trim();
-        var letterOnly = rest.match(/^([A-Fa-f])\b/);
+        var letterOnly = rest.match(/^([A-Ja-j])\b/);
         if(letterOnly){ inlineAnswerLetter = letterOnly[1].toUpperCase(); }
         else if(rest){ inlineShortAnswer = rest; }
         return;
@@ -568,6 +580,19 @@ function parseExamText(rawText){
     } else if(inlineShortAnswer){
       q.type = 'short';
       q.correctAnswer = inlineShortAnswer;
+    } else if(shortAnswerMap[chunk.number]){
+      /* Cau dien tu (khong co phuong an A/B/C) MA bang dap an rieng co dung so thu tu nay —
+         VD de Cambridge Listening Part 2 "6-August", "9-65". TRUOC DAY bi bo qua hoan toan. */
+      q.type = 'short';
+      q.correctAnswer = shortAnswerMap[chunk.number];
+    } else if(/\.{3,}|_{3,}/.test(content)){
+      /* Phat hien dau hieu "cho trong can dien" (chuoi cham/gach lien tiep) nhung KHONG tim
+         thay dap an tuong ung trong bang dap an — PHAI bao ro cho giao vien biet con thieu,
+         khong duoc am tham bien thanh cau tu luan nhu truoc (giao vien se khong biet ma sua). */
+      q.type = 'short';
+      q.correctAnswer = '';
+      q.needsReview = true;
+      warnings.push('Câu '+chunk.number+': có vẻ là câu điền từ (có chỗ trống) nhưng chưa tìm thấy đáp án đúng trong file — vui lòng tự nhập đáp án ở bảng bên dưới.');
     } else {
       q.type = 'essay';
       q.points = 3;
