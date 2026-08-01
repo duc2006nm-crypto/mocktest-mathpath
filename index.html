@@ -3208,6 +3208,29 @@ var FIREBASE_CONFIG = {
 function isCloudConfigured(){
   return !!(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey.indexOf('DAN_')!==0);
 }
+/* Gioi han thoi gian cho cho 1 Promise bat ky — LOI THAT DA GAP: neu Firebase Storage chua duoc
+   "Get started" (bat) trong Firebase Console, request tao metadata file dau tien tra ve 404 va
+   Firebase SDK KHONG BAO GIO resolve/reject Promise upload — treo vinh vien o "0%" (khong phai
+   loi bi nuot, ma la khong bao gio ket thuc), khien nguoi dung cho mai khong ra ket qua. Boc
+   Promise bang withTimeout() de SAU N giay khong xong thi tu dong coi la that bai va bao ro ly
+   do co the xay ra, thay vi treo man hinh vo thoi han. */
+function withTimeout(promise, ms, timeoutMsg){
+  return new Promise(function(resolve, reject){
+    var settled = false;
+    var timer = setTimeout(function(){
+      if(settled) return;
+      settled = true;
+      reject(new Error(timeoutMsg || ('Hết thời gian chờ ('+Math.round(ms/1000)+'s), không có phản hồi.')));
+    }, ms);
+    promise.then(function(v){
+      if(settled) return;
+      settled = true; clearTimeout(timer); resolve(v);
+    }, function(e){
+      if(settled) return;
+      settled = true; clearTimeout(timer); reject(e);
+    });
+  });
+}
 var CloudDB = {
   db:null, auth:null, ready:false, currentAdmin:null, lastError:null,
   /* Khoi tao ket noi Cloud. Goi 1 lan luc App.init(). An toan goi nhieu lan (khong khoi tao lai). */
@@ -4999,10 +5022,10 @@ var App = {
       ir.audioProcessingPct = 0;
       ir.audioIsCloud = true;
       this.refreshImportModal();
-      CloudDB.uploadAudio(file, ir.tempAudioId, function(pct){
+      withTimeout(CloudDB.uploadAudio(file, ir.tempAudioId, function(pct){
         ir.audioProcessingPct = pct;
         self.refreshImportModal();
-      }).then(function(url){
+      }), 25000, 'Tải lên Cloud quá 25 giây không phản hồi — có thể do Firebase Storage chưa được bật cho project này (vào Firebase Console → Storage → bấm "Get started").').then(function(url){
         ir.audioProcessing = false;
         ir.audioDataUrl = url;
         ir.audioCompressedInfo = '☁️ Đã tải audio gốc (chất lượng đầy đủ, '+Math.round(file.size/1024/1024*10)/10+'MB) lên Cloud — không làm nặng trang web.';
@@ -6792,10 +6815,10 @@ var App = {
        chat luong, khong can nen — chi luu 1 duong link nhe vao de thi. */
     if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
       if(status) status.textContent = '⏳ Đang tải audio lên Cloud... 0%';
-      CloudDB.uploadAudio(file, this._audioModalTestId, function(pct){
+      withTimeout(CloudDB.uploadAudio(file, this._audioModalTestId, function(pct){
         var statusC = document.getElementById('audioFileStatus');
         if(statusC) statusC.textContent = '⏳ Đang tải audio lên Cloud... '+pct+'% (đừng đóng cửa sổ)';
-      }).then(function(url){
+      }), 25000, 'Tải lên Cloud quá 25 giây không phản hồi — có thể do Firebase Storage chưa được bật cho project này (vào Firebase Console → Storage → bấm "Get started").').then(function(url){
         self._pendingAudioDataUrl = url;
         var statusC2 = document.getElementById('audioFileStatus');
         if(statusC2) statusC2.textContent = '☁️ Đã tải audio gốc lên Cloud ('+Math.round(file.size/1024/1024*10)/10+'MB, giữ nguyên chất lượng) — bấm "Lưu audio" để hoàn tất.';
