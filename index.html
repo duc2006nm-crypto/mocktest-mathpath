@@ -5009,19 +5009,26 @@ var App = {
         self.refreshImportModal();
       }).catch(function(err){
         ir.audioIsCloud = false;
-        // Cloud loi (mang, quyen truy cap...) — tu dong chuyen sang duong nhung/nen cuc bo ben duoi
-        self._handleImportAudioLocalFallback(file);
+        /* Cloud loi (mang, quyen truy cap, chua bat Firebase Storage...) — tu dong chuyen sang
+           duong nhung/nen cuc bo ben duoi, NHUNG PHAI cho giao vien biet ro ly do that (truoc day
+           bi nuot am tham, khien nhan "da dang nhap Cloud" o tren nhung cuoi cung van roi xuong
+           nen cuc bo ma khong ai hieu vi sao). */
+        var cloudErrMsg = (err && err.message) ? err.message : 'không rõ nguyên nhân';
+        self._handleImportAudioLocalFallback(file, cloudErrMsg);
       });
       return;
     }
     this._handleImportAudioLocalFallback(file);
   },
   /* Duong du phong: nhung truc tiep (file nho) hoac tu nen (file >8MB) roi nhung base64 vao de —
-     dung khi chua dang nhap Cloud Admin hoac Cloud/Storage gap loi. */
-  _handleImportAudioLocalFallback:function(file){
+     dung khi chua dang nhap Cloud Admin hoac Cloud/Storage gap loi. cloudErrMsg (neu co) la ly do
+     THAT khien Cloud that bai truoc do — luon hien thi kem de giao vien biet chinh xac chuyen gi
+     da xay ra, khong de rơi vao im lang. */
+  _handleImportAudioLocalFallback:function(file, cloudErrMsg){
     var ir = this.state.importReview;
     var self = this;
     var RAW_LIMIT = 8*1024*1024;
+    var cloudPrefix = cloudErrMsg ? ('⚠️ Tải lên Cloud thất bại ('+cloudErrMsg+') — đã tự động chuyển sang lưu cục bộ trên trình duyệt. ') : '';
     if(file.size <= RAW_LIMIT){
       ir.audioProcessing = true;
       this.refreshImportModal();
@@ -5029,11 +5036,12 @@ var App = {
       reader.onload = function(){
         ir.audioDataUrl = reader.result;
         ir.audioProcessing = false;
+        ir.audioCompressedInfo = cloudPrefix || '';
         self.refreshImportModal();
       };
       reader.onerror = function(){
         ir.audioProcessing = false;
-        ir.audioWarning = 'Không đọc được file âm thanh, vui lòng thử lại.';
+        ir.audioWarning = cloudPrefix + 'Không đọc được file âm thanh, vui lòng thử lại.';
         self.refreshImportModal();
       };
       reader.readAsDataURL(file);
@@ -5050,16 +5058,16 @@ var App = {
       ir.audioProcessing = false;
       if(res.size > RAW_LIMIT){
         ir.audioDataUrl = '';
-        ir.audioWarning = 'Đã tự động nén nhưng file vẫn còn khoảng '+Math.round(res.size/1024/1024*10)/10+'MB, quá lớn để nhúng — đề vẫn được tạo bình thường, hãy gắn file audio sau ở "Danh sách đề thi → 🔊 Audio thật".';
+        ir.audioWarning = cloudPrefix + 'Đã tự động nén nhưng file vẫn còn khoảng '+Math.round(res.size/1024/1024*10)/10+'MB, quá lớn để nhúng — đề vẫn được tạo bình thường, hãy gắn file audio sau ở "Danh sách đề thi → 🔊 Audio thật".';
       } else {
         ir.audioDataUrl = res.dataUrl;
-        ir.audioCompressedInfo = 'Đã tự động nén từ '+Math.round(file.size/1024/1024*10)/10+'MB xuống còn '+Math.round(res.size/1024/1024*10)/10+'MB.'+(isCloudConfigured() ? ' 💡 Mẹo: đăng nhập Admin Cloud trước khi tải audio để giữ nguyên chất lượng gốc, không cần nén.' : '');
+        ir.audioCompressedInfo = cloudPrefix + 'Đã tự động nén từ '+Math.round(file.size/1024/1024*10)/10+'MB xuống còn '+Math.round(res.size/1024/1024*10)/10+'MB.'+(isCloudConfigured() && !cloudErrMsg ? ' 💡 Mẹo: đăng nhập Admin Cloud trước khi tải audio để giữ nguyên chất lượng gốc, không cần nén.' : '');
       }
       self.refreshImportModal();
     }).catch(function(err){
       ir.audioProcessing = false;
       ir.audioDataUrl = '';
-      ir.audioWarning = 'File khá lớn (>8MB) và trình duyệt này không tự nén được audio — đề vẫn được tạo bình thường, hãy gắn file audio sau ở "Danh sách đề thi → 🔊 Audio thật".';
+      ir.audioWarning = cloudPrefix + 'File khá lớn (>8MB) và trình duyệt này không tự nén được audio — đề vẫn được tạo bình thường, hãy gắn file audio sau ở "Danh sách đề thi → 🔊 Audio thật".';
       self.refreshImportModal();
     });
   },
@@ -6792,46 +6800,49 @@ var App = {
         var statusC2 = document.getElementById('audioFileStatus');
         if(statusC2) statusC2.textContent = '☁️ Đã tải audio gốc lên Cloud ('+Math.round(file.size/1024/1024*10)/10+'MB, giữ nguyên chất lượng) — bấm "Lưu audio" để hoàn tất.';
       }).catch(function(err){
-        // Cloud loi -> tu dong chuyen sang duong nhung/nen cuc bo ben duoi
-        self._localAudioFileSelectFallback(file, status);
+        /* Cloud loi -> tu dong chuyen sang duong nhung/nen cuc bo, NHUNG phai cho giao vien biet
+           ro ly do that thay vi im lang (cung 1 loi da sua o handleImportAudioFileSelect). */
+        var cloudErrMsg = (err && err.message) ? err.message : 'không rõ nguyên nhân';
+        self._localAudioFileSelectFallback(file, status, cloudErrMsg);
       });
       return;
     }
     this._localAudioFileSelectFallback(file, status);
   },
-  _localAudioFileSelectFallback:function(file, status){
+  _localAudioFileSelectFallback:function(file, status, cloudErrMsg){
     var self = this;
     var RAW_LIMIT = 8*1024*1024;
+    var cloudPrefix = cloudErrMsg ? ('⚠️ Tải lên Cloud thất bại ('+cloudErrMsg+') — đã tự động chuyển sang lưu cục bộ. ') : '';
     if(file.size <= RAW_LIMIT){
       var reader = new FileReader();
       reader.onload = function(){
         self._pendingAudioDataUrl = reader.result;
-        if(status) status.textContent = '✅ Đã chọn: '+file.name+' ('+Math.round(file.size/1024)+' KB) — bấm "Lưu audio" để hoàn tất.';
+        if(status) status.textContent = cloudPrefix + '✅ Đã chọn: '+file.name+' ('+Math.round(file.size/1024)+' KB) — bấm "Lưu audio" để hoàn tất.';
       };
       reader.onerror = function(){
-        if(status) status.textContent = '⚠️ Không đọc được file, vui lòng thử lại.';
+        if(status) status.textContent = cloudPrefix + '⚠️ Không đọc được file, vui lòng thử lại.';
       };
       reader.readAsDataURL(file);
       return;
     }
     // File > 8MB: tu dong nen nhe truoc khi nhung
-    if(status) status.textContent = '⏳ File hơi lớn ('+Math.round(file.size/1024/1024*10)/10+'MB) — đang tự động nén nhẹ... 0%';
+    if(status) status.textContent = cloudPrefix + '⏳ File hơi lớn ('+Math.round(file.size/1024/1024*10)/10+'MB) — đang tự động nén nhẹ... 0%';
     this.compressAudioToDataUrl(file, function(pct){
       var statusP = document.getElementById('audioFileStatus');
-      if(statusP) statusP.textContent = '⏳ Đang tự động nén nhẹ... '+pct+'% (đừng đóng cửa sổ)';
+      if(statusP) statusP.textContent = cloudPrefix + '⏳ Đang tự động nén nhẹ... '+pct+'% (đừng đóng cửa sổ)';
     }).then(function(res){
       var status2 = document.getElementById('audioFileStatus');
       if(res.size > RAW_LIMIT){
         self._pendingAudioDataUrl = null;
-        if(status2) status2.textContent = '⚠️ Đã tự động nén nhưng vẫn còn khoảng '+Math.round(res.size/1024/1024*10)/10+'MB, quá lớn để lưu vào trình duyệt — hãy dùng cách nhập tên file bên dưới thay thế.';
+        if(status2) status2.textContent = cloudPrefix + '⚠️ Đã tự động nén nhưng vẫn còn khoảng '+Math.round(res.size/1024/1024*10)/10+'MB, quá lớn để lưu vào trình duyệt — hãy dùng cách nhập tên file bên dưới thay thế.';
       } else {
         self._pendingAudioDataUrl = res.dataUrl;
-        if(status2) status2.textContent = '✅ Đã tự động nén từ '+Math.round(file.size/1024/1024*10)/10+'MB xuống còn '+Math.round(res.size/1024/1024*10)/10+'MB — bấm "Lưu audio" để hoàn tất.';
+        if(status2) status2.textContent = cloudPrefix + '✅ Đã tự động nén từ '+Math.round(file.size/1024/1024*10)/10+'MB xuống còn '+Math.round(res.size/1024/1024*10)/10+'MB — bấm "Lưu audio" để hoàn tất.';
       }
     }).catch(function(err){
       self._pendingAudioDataUrl = null;
       var status3 = document.getElementById('audioFileStatus');
-      if(status3) status3.textContent = '⚠️ File khá lớn ('+Math.round(file.size/1024/1024*10)/10+'MB) và trình duyệt này không tự nén được — hãy dùng cách nhập tên file bên dưới thay thế.';
+      if(status3) status3.textContent = cloudPrefix + '⚠️ File khá lớn ('+Math.round(file.size/1024/1024*10)/10+'MB) và trình duyệt này không tự nén được — hãy dùng cách nhập tên file bên dưới thay thế.';
     });
   },
   /* Doi 1 chuoi data: URL (audio da nhung base64 truoc day khi chua dang nhap Cloud) thanh Blob
