@@ -3276,7 +3276,21 @@ var DB = {
     this.seed();
     this.save();
   },
-  save:function(){ localStorage.setItem(DB_KEY, JSON.stringify(this.data)); },
+  /* Luu du lieu xuong localStorage cua trinh duyet. BOC try/catch: neu bo nho trinh duyet da day
+     (QuotaExceededError - thuong do audio cu nhung base64 qua nang), KHONG duoc de loi nay
+     "leak" ra ngoai va bi nham la loi cua Cloud/Firebase (2 thu hoan toan doc lap). Tra ve
+     true/false de noi goi biet ma quyet dinh thong bao phu hop. */
+  save:function(){
+    try{
+      localStorage.setItem(DB_KEY, JSON.stringify(this.data));
+      this.lastSaveError = null;
+      return true;
+    }catch(e){
+      this.lastSaveError = e;
+      if(window.console) console.error('DB.save() loi (co the do bo nho trinh duyet day):', e);
+      return false;
+    }
+  },
   reset:function(){ localStorage.removeItem(DB_KEY); this.load(); },
   /* Tron danh sach de tu Cloud vao du lieu dang hien thi. Cac de co nguon goc Cloud (source:'cloud')
      tu lan tron truoc se duoc thay the bang ban moi nhat; de tao/luu chi tren may (khong co source,
@@ -4029,8 +4043,15 @@ var App = {
     t.source = 'cloud';
     CloudDB.saveTest(t, function(ok, info){
       if(ok){
-        DB.save();
-        self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud — mọi thiết bị khác sẽ thấy bản này.', 'success');
+        var savedLocally = DB.save();
+        if(savedLocally){
+          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud — mọi thiết bị khác sẽ thấy bản này.', 'success');
+        }else{
+          /* Cloud da luu thanh cong (Firestore OK) - chi la cache tren MAY nay khong luu duoc vi
+             bo nho trinh duyet day. Phai bao dung su that, KHONG duoc noi "day len Cloud that bai"
+             vi de nay THUC SU da co tren Cloud roi. */
+          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud thành công. (Lưu ý: máy này không lưu được bản cache cục bộ vì bộ nhớ trình duyệt đã đầy — không ảnh hưởng dữ liệu trên Cloud. Nên xuất file sao lưu rồi dọn bớt audio cũ.)', 'success');
+        }
       }else{
         self.showToast('⚠️ Đẩy lên Cloud thất bại: '+info, 'error');
       }
@@ -6719,6 +6740,7 @@ var App = {
         '<input type="text" name="audioFileUrl" value="'+esc(audio.file&&!audio.file.startsWith('data:')?audio.file:'')+'" placeholder="VD: de-thi-1-listening.mp3">'+
         (parts.length ? '<h3 style="margin-top:22px">Mốc thời gian từng Part trong file (để tua đúng chỗ)</h3>'+rangeRows : rangeRows)+
         '<div class="modal-actions">'+
+          (audio.file && audio.file.indexOf('data:')===0 && isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin ? '<button type="button" class="btn btn-outline" onclick="App.migrateAudioToCloud(\''+test.id+'\')">☁️ Chuyển audio này lên Cloud (giảm dung lượng máy)</button> ' : '')+
           (audio.file ? '<button type="button" class="btn btn-danger" onclick="App.removeTestAudio(\''+test.id+'\')">🗑️ Xóa audio</button>' : '')+
           '<button type="button" class="btn" onclick="App.closeModal()">Hủy</button>'+
           '<button type="submit" class="btn btn-primary">Lưu audio</button>'+
@@ -6785,6 +6807,53 @@ var App = {
       self._pendingAudioDataUrl = null;
       var status3 = document.getElementById('audioFileStatus');
       if(status3) status3.textContent = '⚠️ File khá lớn ('+Math.round(file.size/1024/1024*10)/10+'MB) và trình duyệt này không tự nén được — hãy dùng cách nhập tên file bên dưới thay thế.';
+    });
+  },
+  /* Doi 1 chuoi data: URL (audio da nhung base64 truoc day khi chua dang nhap Cloud) thanh Blob
+     de co the tai len Firebase Storage — dung khi giao vien muon "don dep" audio cu de giam
+     dung luong localStorage. Gia dinh dung dinh dang "data:<mime>;base64,<du lieu>" - dung dinh
+     dang duy nhat ma app nay tung tao ra (qua FileReader.readAsDataURL / nen audio). */
+  dataUrlToBlob:function(dataUrl){
+    var comma = dataUrl.indexOf(',');
+    var meta = dataUrl.slice(0, comma);
+    var mimeMatch = meta.match(/^data:([^;]+)/);
+    var mime = mimeMatch ? mimeMatch[1] : 'audio/mpeg';
+    var byteChars = atob(dataUrl.slice(comma+1));
+    var byteNumbers = new Array(byteChars.length);
+    for(var i=0;i<byteChars.length;i++){ byteNumbers[i] = byteChars.charCodeAt(i); }
+    return new Blob([new Uint8Array(byteNumbers)], {type:mime});
+  },
+  /* Nut "don dep" thu cong cho 1 de da co san audio nhung base64 tu truoc (nang, chiem nhieu
+     localStorage) — chuyen no len Firebase Storage giong nhu audio moi, roi thay the bang 1
+     duong link nhe. Giup giam dung luong may ma KHONG can giao vien tim lai file mp3 goc. */
+  migrateAudioToCloud:function(testId){
+    var db = DB.get();
+    var test = db.tests.find(function(t){ return t.id===testId; });
+    if(!test || !test.audio || !test.audio.file || test.audio.file.indexOf('data:')!==0) return;
+    if(!(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin)){
+      this.showToast('Bạn cần đăng nhập Admin Cloud trước khi chuyển audio lên Cloud.', 'error');
+      return;
+    }
+    var self = this;
+    var status = document.getElementById('audioFileStatus');
+    if(status) status.textContent = '⏳ Đang chuyển audio cũ lên Cloud... 0%';
+    var blob;
+    try{ blob = this.dataUrlToBlob(test.audio.file); }
+    catch(e){ this.showToast('⚠️ Không đọc được audio cũ của đề này để chuyển lên Cloud.', 'error'); return; }
+    CloudDB.uploadAudio(blob, testId, function(pct){
+      var s = document.getElementById('audioFileStatus');
+      if(s) s.textContent = '⏳ Đang chuyển audio cũ lên Cloud... '+pct+'%';
+    }).then(function(url){
+      test.audio.file = url;
+      var savedLocally = DB.save();
+      self.syncTestToCloudIfAdmin(test);
+      self.closeModal();
+      self.render();
+      self.showToast(savedLocally
+        ? '☁️ Đã chuyển audio cũ của "'+test.title+'" lên Cloud — máy này đã giảm bớt dung lượng lưu trữ.'
+        : '☁️ Đã chuyển audio lên Cloud thành công. (Bộ nhớ máy vẫn đang đầy nên chưa lưu được cache — hãy tải lại trang sau khi dọn thêm vài đề cũ khác.)', 'success');
+    }).catch(function(err){
+      self.showToast('⚠️ Chuyển audio lên Cloud thất bại: '+(err && err.message), 'error');
     });
   },
   submitTestAudioForm:function(e, testId){
