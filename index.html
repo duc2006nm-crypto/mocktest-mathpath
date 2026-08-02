@@ -4054,12 +4054,35 @@ var App = {
   /* Goi ngay sau khi tao/sua 1 de thi tren may — NEU dang dang nhap Admin Cloud thi tu dong day
      de len Cloud de moi hoc sinh o moi thiet bi khac deu thay ban moi nhat. Neu chua dang nhap
      Admin Cloud (hoac chua cau hinh Cloud), khong lam gi ca — de chi luu tren may nhu truoc. */
+  /* SUA LOI: audio nhung base64 cuc bo (data: URI) hau nhu LUON vuot gioi han 1MB/tai lieu cua
+     Firestore. TRUOC DAY, ham nay day nguyen ca test (ke ca audio khong lo) len Firestore trong
+     1 lan set() duy nhat — khi bi Firestore tu choi vi qua kich thuoc, TOAN BO de thi (tieu de,
+     cau hoi, moi thu) deu KHONG duoc dong bo, chi bao loi qua 1 toast thoang qua rat de bi bo
+     lo. Day chinh la nguyen nhan hoc sinh dang nhap Cloud khong thay ca audio MOI lan audio CU:
+     giao vien xoa audio cu -> dong bo thanh cong (de nay khong con nho) -> tai audio moi len
+     nhung Cloud Storage that bai -> tu dong nhung base64 cuc bo -> dong bo LEN CLOUD THAT BAI
+     HOAN TOAN do file qua lon -> ban tren Cloud van la ban "da xoa audio" tu buoc truoc.
+     Nay tach audio cuc bo qua lon RA KHOI du lieu gui len Firestore (de tieu de/cau hoi/cai dat
+     khac van luon dong bo binh thuong), va bao ro rang, cu the cho giao vien biet audio CHUA len
+     duoc Cloud thay vi 1 thong bao loi chung chung de bi bo qua. */
   syncTestToCloudIfAdmin:function(test){
     if(!(CloudDB.ready && CloudDB.currentAdmin)) return;
-    test.source = 'cloud';
     var self = this;
-    CloudDB.saveTest(test, function(ok, info){
-      self.showToast(ok ? '☁️ Đã đồng bộ đề lên Cloud — mọi người sẽ thấy bản mới nhất.' : ('⚠️ Không đồng bộ được lên Cloud: '+info), ok?'success':'error');
+    test.source = 'cloud';
+    var hasHugeLocalAudio = !!(test.audio && test.audio.file && test.audio.file.indexOf('data:')===0);
+    var payload = test;
+    if(hasHugeLocalAudio){
+      payload = JSON.parse(JSON.stringify(test));
+      delete payload.audio;
+    }
+    CloudDB.saveTest(payload, function(ok, info){
+      if(!ok){
+        self.showToast('⚠️ Không đồng bộ được lên Cloud: '+info, 'error');
+      } else if(hasHugeLocalAudio){
+        self.showToast('☁️ Đã đồng bộ đề thi lên Cloud, nhưng ⚠️ file audio đang lưu CỤC BỘ trên máy này quá lớn để đồng bộ — học sinh dùng máy/tài khoản khác sẽ KHÔNG nghe được audio này cho tới khi bạn tải audio lên Cloud Storage (mở "🔊 Audio thật" → bấm "Chuyển audio này lên Cloud").', 'error');
+      } else {
+        self.showToast('☁️ Đã đồng bộ đề lên Cloud — mọi người sẽ thấy bản mới nhất.', 'success');
+      }
       self.render();
     });
   },
@@ -4089,16 +4112,23 @@ var App = {
     }
     var self = this;
     t.source = 'cloud';
-    CloudDB.saveTest(t, function(ok, info){
+    var hasHugeLocalAudio = !!(t.audio && t.audio.file && t.audio.file.indexOf('data:')===0);
+    var payload = t;
+    if(hasHugeLocalAudio){
+      payload = JSON.parse(JSON.stringify(t));
+      delete payload.audio;
+    }
+    CloudDB.saveTest(payload, function(ok, info){
       if(ok){
         var savedLocally = DB.save();
+        var audioNote = hasHugeLocalAudio ? ' ⚠️ Riêng file audio đang lưu cục bộ trên máy này quá lớn để đồng bộ — học sinh dùng máy/tài khoản khác sẽ KHÔNG nghe được audio cho tới khi bạn chuyển audio lên Cloud Storage (mở "🔊 Audio thật" → "Chuyển audio này lên Cloud").' : '';
         if(savedLocally){
-          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud — mọi thiết bị khác sẽ thấy bản này.', 'success');
+          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud — mọi thiết bị khác sẽ thấy bản này.'+audioNote, hasHugeLocalAudio?'error':'success');
         }else{
           /* Cloud da luu thanh cong (Firestore OK) - chi la cache tren MAY nay khong luu duoc vi
              bo nho trinh duyet day. Phai bao dung su that, KHONG duoc noi "day len Cloud that bai"
              vi de nay THUC SU da co tren Cloud roi. */
-          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud thành công. (Lưu ý: máy này không lưu được bản cache cục bộ vì bộ nhớ trình duyệt đã đầy — không ảnh hưởng dữ liệu trên Cloud. Nên xuất file sao lưu rồi dọn bớt audio cũ.)', 'success');
+          self.showToast('☁️ Đã đẩy đề "'+t.title+'" lên Cloud thành công. (Lưu ý: máy này không lưu được bản cache cục bộ vì bộ nhớ trình duyệt đã đầy — không ảnh hưởng dữ liệu trên Cloud. Nên xuất file sao lưu rồi dọn bớt audio cũ.)'+audioNote, 'success');
         }
       }else{
         self.showToast('⚠️ Đẩy lên Cloud thất bại: '+info, 'error');
@@ -5013,9 +5043,16 @@ var App = {
     var self = this;
     var RAW_LIMIT = 8*1024*1024;
 
-    /* Uu tien 1: neu da dang nhap Admin Cloud, tai file GOC (khong nen, khong mat chat luong)
-       len Firebase Storage — de thi chi luu 1 duong link nhe, KHONG lam nang file HTML/localStorage
-       du file goc bao nhieu MB. Day la duong di TOT NHAT khi co san. */
+    /* File da du nho (<=8MB) -> nhung truc tiep NGAY, KHONG thu tai Cloud truoc nua (do cho toi
+       25 giay khong can thiet khi file da du nho de nhung ngay lap tuc). Giao vien van co the tu
+       "Chuyen audio nay len Cloud" sau khi tao de neu muon dong bo cho hoc sinh may khac. */
+    if(file.size <= RAW_LIMIT){
+      this._handleImportAudioLocalFallback(file);
+      return;
+    }
+
+    /* File >8MB: BAT BUOC can Cloud (giu nguyen chat luong, khong nen) hoac tu nen — uu tien Cloud
+       neu da dang nhap Admin. */
     if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
       if(!ir.tempAudioId) ir.tempAudioId = uid('tmpaudio');
       ir.audioProcessing = true;
@@ -5968,7 +6005,11 @@ var App = {
           (usedCount? '<div class="hint" style="margin-top:4px">Đã giao '+usedCount+' lượt</div>' : '')+
         '</td>'+
         gradeCell+
-        '<td>'+(t.source==='cloud' ? '<span class="badge badge-green">☁️ Cloud</span>' : '<span class="badge badge-gray">💻 Máy này</span>')+'</td>'+
+        '<td>'+(t.source==='cloud' ? '<span class="badge badge-green">☁️ Cloud</span>' : '<span class="badge badge-gray">💻 Máy này</span>')+
+          (t.source==='cloud' && t.audio && t.audio.file && t.audio.file.indexOf('data:')===0
+            ? '<div class="hint" style="color:#b45309;margin-top:4px;max-width:180px">⚠️ Audio đang chỉ ở máy này — học sinh dùng máy/tài khoản khác KHÔNG nghe được. Mở "🔊 Audio thật" để chuyển lên Cloud.</div>'
+            : '')+
+        '</td>'+
         '<td>'+
           '<button class="btn btn-sm btn-outline" onclick="App.previewTest(\''+t.id+'\')">👁️ Xem trước</button> '+
           '<button class="btn btn-sm btn-outline" onclick="App.goto(\'teacherEditTest\',{testId:\''+t.id+'\'})">✏️ Sửa đề</button> '+
@@ -6789,7 +6830,7 @@ var App = {
       '<h3>🔊 Audio thật cho bài nghe — '+esc(test.title)+'</h3>'+
       '<div class="hint" style="margin-bottom:12px">Mặc định học sinh nghe bằng giọng đọc máy (Text-to-Speech) dựng từ script. Nếu có file ghi âm gốc (mp3) của đề, gắn vào đây để học sinh nghe file THẬT, giống thi thật hơn.</div>'+
       '<form onsubmit="return App.submitTestAudioForm(event,\''+test.id+'\')">'+
-        '<label>Tải file mp3 lên'+((isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin) ? ' (đã đăng nhập Cloud — audio sẽ tải lên Cloud, giữ nguyên chất lượng gốc)' : ' (file lớn hơn ~8MB sẽ được tự động nén nhẹ trước khi nhúng)')+'</label>'+
+        '<label>Tải file mp3 lên'+((isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin) ? ' (dưới 8MB sẽ nhúng trực tiếp ngay; trên 8MB sẽ tải lên Cloud để giữ chất lượng gốc)' : ' (dưới 8MB sẽ nhúng trực tiếp ngay; trên 8MB sẽ tự động nén nhẹ)')+'</label>'+
         '<input type="file" accept="audio/*" onchange="App.handleTestAudioFileSelect(event)">'+
         '<div id="audioFileStatus" class="hint" style="margin-top:6px">'+(audio.file ? '✅ Đã có file âm thanh cho đề này.' : 'Chưa chọn file.')+'</div>'+
         '<label style="margin-top:14px">Hoặc nhập tên file / đường dẫn (đặt file mp3 CÙNG THƯ MỤC với file HTML này)</label>'+
@@ -6811,8 +6852,19 @@ var App = {
     var self = this;
     var RAW_LIMIT = 8*1024*1024;
 
-    /* Uu tien 1: da dang nhap Admin Cloud -> tai file GOC len Firebase Storage, giu nguyen
-       chat luong, khong can nen — chi luu 1 duong link nhe vao de thi. */
+    /* File da du nho (<=8MB) -> nhung truc tiep NGAY, KHONG thu tai Cloud truoc nua. Truoc day cu
+       da dang nhap Cloud la thu tai Cloud truoc bat ke dung luong file, khien giao vien phai cho
+       toi 25 giay (het timeout) roi moi duoc nhung cuc bo — trong khi file da <=8MB thi nhung
+       truc tiep la du nhanh gon, khong can thiet phai qua Cloud. Giao vien van co the tu bam
+       "Chuyen audio nay len Cloud" trong modal sau neu muon dong bo cho hoc sinh may khac. */
+    if(file.size <= RAW_LIMIT){
+      this._localAudioFileSelectFallback(file, status);
+      return;
+    }
+
+    /* File >8MB: BAT BUOC can Cloud (giu nguyen chat luong goc) hoac nen — nhung truc tiep se qua
+       nang cho localStorage. Uu tien 1: da dang nhap Admin Cloud -> tai file GOC len Firebase
+       Storage, khong can nen — chi luu 1 duong link nhe vao de thi. */
     if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
       if(status) status.textContent = '⏳ Đang tải audio lên Cloud... 0%';
       withTimeout(CloudDB.uploadAudio(file, this._audioModalTestId, function(pct){
