@@ -91,7 +91,9 @@
      hoc sinh hoac chua dang nhap (man hinh login). */
   body:not(.role-teacher) #restoreBackupBtn,
   body:not(.role-teacher) #migrateImagesCloudBtn,
-  body:not(.role-teacher) #migrateAudioCloudBtn{display:none !important;}
+  body:not(.role-teacher) #migrateAudioCloudBtn,
+  body:not(.role-teacher) #publishToGithubBtn,
+  body:not(.role-teacher) #githubSettingsBtn{display:none !important;}
   .sidebar{width:250px;background:var(--sidebar-bg);color:#e2e8f0;display:flex;flex-direction:column;flex-shrink:0;}
   .sidebar .brand{padding:22px 18px;font-size:19px;font-weight:700;color:#fff;border-bottom:1px solid #1e293b;}
   .sidebar .brand small{display:block;font-size:11px;font-weight:500;color:#94a3b8;margin-top:4px;line-height:1.5;}
@@ -53703,6 +53705,206 @@ App.importBackupData = function(parsed){
   }
   if(document.readyState!=='loading') addRestoreBackupButton();
   else document.addEventListener('DOMContentLoaded', addRestoreBackupButton);
+})();
+
+/* ============================================================
+   DANG DE MOI TRUC TIEP LEN GITHUB (khong can Codespace/Terminal).
+   Dung GitHub Git Data API (blobs/trees/commits) de gop anh moi +
+   du lieu de moi vao 1 commit duy nhat, day thang len repo.
+   Chi hien voi vai tro Giao vien (xem CSS o dau file). Them boi Claude.
+   ============================================================ */
+var GithubPublish = {
+  CFG_KEY: 'mocktest_github_cfg',
+  getConfig: function(){
+    try{ return JSON.parse(localStorage.getItem(this.CFG_KEY) || 'null'); }catch(e){ return null; }
+  },
+  saveConfig: function(cfg){ localStorage.setItem(this.CFG_KEY, JSON.stringify(cfg)); },
+  api: function(cfg, pathAndQuery, opts){
+    opts = opts || {};
+    var url = 'https://api.github.com/repos/' + cfg.owner + '/' + cfg.repo + pathAndQuery;
+    var headers = { 'Authorization': 'Bearer ' + cfg.token, 'Accept': 'application/vnd.github+json' };
+    if(opts.body) headers['Content-Type'] = 'application/json';
+    return fetch(url, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function(r){
+      if(!r.ok){
+        return r.json().catch(function(){ return {}; }).then(function(errBody){
+          throw new Error('GitHub API lỗi ' + r.status + ': ' + (errBody.message || r.statusText));
+        });
+      }
+      return r.json();
+    });
+  },
+  utf8ToBase64: function(str){
+    var bytes = new TextEncoder().encode(str);
+    var bin = '';
+    for(var i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  },
+  base64ToUtf8: function(b64){
+    var bin = atob(b64.replace(/\n/g,''));
+    var bytes = new Uint8Array(bin.length);
+    for(var i=0;i<bin.length;i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+};
+
+App.openGithubSettings = function(){
+  var cfg = GithubPublish.getConfig() || {owner:'', repo:'', branch:'main', token:''};
+  var owner = prompt('Tên tài khoản/tổ chức GitHub (ví dụ: duc2006nm-crypto):', cfg.owner || '');
+  if(owner===null) return;
+  var repo = prompt('Tên repo (ví dụ: mocktest-mathpath):', cfg.repo || '');
+  if(repo===null) return;
+  var branch = prompt('Tên nhánh (thường là "main"):', cfg.branch || 'main');
+  if(branch===null) return;
+  var token = prompt('Personal Access Token của GitHub (dán vào đây — sẽ được lưu trên trình duyệt này, không gửi đi đâu khác ngoài GitHub). Để trống nếu muốn giữ token cũ:', '');
+  if(token===null) return;
+  if(!token) token = cfg.token || '';
+  if(!token){ this.showToast('Cần nhập Personal Access Token để dùng tính năng này.', 'error'); return; }
+  GithubPublish.saveConfig({owner:owner.trim(), repo:repo.trim(), branch:(branch.trim()||'main'), token:token.trim()});
+  this.showToast('✅ Đã lưu cấu hình GitHub trên trình duyệt này.', 'success');
+};
+
+App.publishToGithub = function(){
+  var cfg = GithubPublish.getConfig();
+  if(!cfg || !cfg.token){ this.showToast('Cần thiết lập GitHub trước — bấm nút ⚙️ Cấu hình GitHub.', 'error'); this.openGithubSettings(); return; }
+  var db = DB.get();
+  if(!db.migratedPublishFlagV1){
+    (db.tests||[]).forEach(function(t){ if(t.publishedToWeb===undefined) t.publishedToWeb = true; });
+    db.migratedPublishFlagV1 = true;
+    DB.save();
+  }
+  var unpublished = (db.tests||[]).filter(function(t){ return t.publishedToWeb !== true; });
+  if(unpublished.length===0){ this.showToast('Không có đề mới cần đăng — mọi thứ đã lên web rồi.', 'info'); return; }
+  var titles = unpublished.map(function(t,i){ return (i+1)+'. '+t.title; }).join('\n');
+  if(!window.confirm('Sẽ đăng '+unpublished.length+' đề lên web:\n\n'+titles+'\n\nQuá trình có thể mất 1-2 phút, đừng đóng tab. Tiếp tục?')) return;
+
+  var self = this;
+  this.showToast('⏳ Đang chuẩn bị đăng lên GitHub...', 'info');
+
+  GithubPublish.api(cfg, '/git/refs/heads/'+cfg.branch).then(function(refData){
+    var latestCommitSha = refData.object.sha;
+    return GithubPublish.api(cfg, '/git/commits/'+latestCommitSha).then(function(commitData){
+      return {latestCommitSha: latestCommitSha, treeSha: commitData.tree.sha};
+    });
+  }).then(function(info){
+    return GithubPublish.api(cfg, '/git/trees/'+info.treeSha+'?recursive=1').then(function(treeData){
+      info.tree = treeData.tree; return info;
+    });
+  }).then(function(info){
+    var indexEntry = info.tree.find(function(e){ return e.path==='index.html'; });
+    if(!indexEntry) throw new Error('Không tìm thấy index.html trong repo.');
+    var maxImgIdx = -1;
+    info.tree.forEach(function(e){
+      var m = /^images\/img_(\d+)\./.exec(e.path);
+      if(m){ var n=parseInt(m[1],10); if(n>maxImgIdx) maxImgIdx=n; }
+    });
+    info.nextImgIdx = maxImgIdx+1;
+    info.indexBlobSha = indexEntry.sha;
+    return info;
+  }).then(function(info){
+    return GithubPublish.api(cfg, '/git/blobs/'+info.indexBlobSha).then(function(blobData){
+      info.indexHtml = GithubPublish.base64ToUtf8(blobData.content); return info;
+    });
+  }).then(function(info){
+    var newTreeEntries = [];
+    var imgCounter = { n: info.nextImgIdx };
+    var uploadPromise = Promise.resolve();
+    var totalImgs = 0;
+    unpublished.forEach(function(t){
+      (t.questions||[]).forEach(function(q){
+        function handleArr(arr){
+          if(!Array.isArray(arr)) return;
+          for(var i=0;i<arr.length;i++){
+            (function(i){
+              var v = arr[i];
+              if(typeof v==='string' && v.indexOf('data:image')===0){
+                totalImgs++;
+                var idx = imgCounter.n++;
+                var m = /^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/.exec(v);
+                if(!m) return;
+                var mime = m[1], b64 = m[2];
+                var ext = /jpeg/.test(mime)?'jpg':(/svg/.test(mime)?'svg':(mime.split('/')[1]||'png'));
+                var fileName = 'images/img_'+idx+'.'+ext;
+                uploadPromise = uploadPromise.then(function(){
+                  self.showToast('⏳ Đang tải ảnh #'+idx+'...', 'info');
+                  return GithubPublish.api(cfg, '/git/blobs', {method:'POST', body:{content:b64, encoding:'base64'}});
+                }).then(function(blobRes){
+                  newTreeEntries.push({path:fileName, mode:'100644', type:'blob', sha:blobRes.sha});
+                  arr[i] = fileName;
+                });
+              }
+            })(i);
+          }
+        }
+        handleArr(q.images);
+        if(q.choiceImages){ q.choiceImages.forEach(function(carr){ handleArr(carr); }); }
+      });
+    });
+    return uploadPromise.then(function(){ info.newTreeEntries = newTreeEntries; info.totalImgs = totalImgs; return info; });
+  }).then(function(info){
+    var marker = '/* === NEW_EXAM_PACK_DATA_INSERT_POINT === */';
+    if(info.indexHtml.indexOf(marker)===-1) throw new Error('Không tìm thấy điểm chèn trong index.html — dừng lại để tránh hỏng file.');
+    var block = '\n/* ==== Đề mới đăng từ app lúc '+new Date().toISOString()+' ==== */\n'+
+      '(function(){\n  var NEW_TESTS_FROM_APP = '+JSON.stringify(unpublished, null, 2)+';\n'+
+      '  NEW_TESTS_FROM_APP.forEach(function(t){ tests.push(t); });\n})();\n\n';
+    info.newIndexHtml = info.indexHtml.replace(marker, block+marker);
+    return info;
+  }).then(function(info){
+    self.showToast('⏳ Đang cập nhật index.html...', 'info');
+    return GithubPublish.api(cfg, '/git/blobs', {method:'POST', body:{content: GithubPublish.utf8ToBase64(info.newIndexHtml), encoding:'base64'}}).then(function(blobRes){
+      info.newTreeEntries.push({path:'index.html', mode:'100644', type:'blob', sha:blobRes.sha});
+      return info;
+    });
+  }).then(function(info){
+    return GithubPublish.api(cfg, '/git/trees', {method:'POST', body:{base_tree: info.treeSha, tree: info.newTreeEntries}}).then(function(treeRes){
+      info.newTreeSha = treeRes.sha; return info;
+    });
+  }).then(function(info){
+    var msg = 'Đăng '+unpublished.length+' đề mới từ app - '+new Date().toISOString().slice(0,10);
+    return GithubPublish.api(cfg, '/git/commits', {method:'POST', body:{message:msg, tree:info.newTreeSha, parents:[info.latestCommitSha]}}).then(function(commitRes){
+      info.newCommitSha = commitRes.sha; return info;
+    });
+  }).then(function(info){
+    return GithubPublish.api(cfg, '/git/refs/heads/'+cfg.branch, {method:'PATCH', body:{sha: info.newCommitSha}}).then(function(){ return info; });
+  }).then(function(info){
+    unpublished.forEach(function(t){ t.publishedToWeb = true; });
+    DB.save();
+    self.showToast('✅ Đã đăng '+unpublished.length+' đề ('+info.totalImgs+' ảnh) lên web thành công!', 'success');
+    self.render();
+  }).catch(function(err){
+    if(window.console) console.error(err);
+    self.showToast('❌ Lỗi khi đăng lên GitHub: '+(err && err.message ? err.message : err), 'error');
+  });
+};
+
+(function(){
+  function addGithubButtons(){
+    if(!document.getElementById('githubSettingsBtn')){
+      var cfgBtn = document.createElement('button');
+      cfgBtn.id = 'githubSettingsBtn';
+      cfgBtn.type = 'button';
+      cfgBtn.textContent = '⚙️ Cấu hình GitHub';
+      cfgBtn.title = 'Thiết lập tài khoản/repo/token GitHub (chỉ cần làm 1 lần)';
+      cfgBtn.style.cssText = 'position:fixed;bottom:112px;right:16px;z-index:99999;padding:10px 16px;background:#334155;color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);font-size:13px;font-weight:600;';
+      cfgBtn.onclick = function(){ if(window.App) App.openGithubSettings(); };
+      document.body.appendChild(cfgBtn);
+    }
+    if(!document.getElementById('publishToGithubBtn')){
+      var btn = document.createElement('button');
+      btn.id = 'publishToGithubBtn';
+      btn.type = 'button';
+      btn.textContent = '🚀 Đăng đề lên web';
+      btn.title = 'Đăng các đề mới (kèm ảnh) thẳng lên GitHub, không cần Codespace/Terminal';
+      btn.style.cssText = 'position:fixed;bottom:160px;right:16px;z-index:99999;padding:10px 16px;background:#059669;color:#fff;border:none;border-radius:8px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.25);font-size:13px;font-weight:600;';
+      btn.onclick = function(){ if(window.App) App.publishToGithub(); };
+      document.body.appendChild(btn);
+    }
+  }
+  if(document.readyState!=='loading') addGithubButtons();
+  else document.addEventListener('DOMContentLoaded', addGithubButtons);
 })();
 </script>
 <!-- DIEM KET THUC BAT BUOC: neu ban dang doc thay dong nay bi thieu / file dung
