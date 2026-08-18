@@ -48636,6 +48636,17 @@ var FIREBASE_CONFIG = {
 function isCloudConfigured(){
   return !!(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.apiKey.indexOf('DAN_')!==0);
 }
+/* ============ Tai khoan hoc sinh dong bo Cloud (them boi Claude) ============
+   Firebase Auth (Email/Password) khong ho tro dang nhap bang "ten dang nhap" thuan tuy, nen moi
+   hoc sinh duoc gan 1 email GIA LAP suy ra tu username (khong can email that, hoc sinh khong bao
+   gio thay/dung email nay). Nho vay tung hoc sinh co 1 danh tinh Firebase Auth THAT, dong bo dung
+   tren MOI thiet bi, va Firestore Security Rules co the cho phep CHINH hoc sinh do tu doc/ghi
+   (vd: tru tin dung khi mo de) ma khong ai gia mao sua du lieu nguoi khac duoc. */
+var STUDENT_AUTH_DOMAIN = 'mocktest-a2key-students.app';
+function studentUsernameToEmail(username){
+  var safe = String(username||'').trim().toLowerCase().replace(/[^a-z0-9_.-]/g,'');
+  return 'stu-' + safe + '@' + STUDENT_AUTH_DOMAIN;
+}
 /* Gioi han thoi gian cho cho 1 Promise bat ky — LOI THAT DA GAP: neu Firebase Storage chua duoc
    "Get started" (bat) trong Firebase Console, request tao metadata file dau tien tra ve 404 va
    Firebase SDK KHONG BAO GIO resolve/reject Promise upload — treo vinh vien o "0%" (khong phai
@@ -48764,7 +48775,146 @@ var CloudDB = {
       });
     });
   },
-  logoutAdmin:function(){ if(this.ready) this.auth.signOut(); }
+  logoutAdmin:function(){ if(this.ready) this.auth.signOut(); },
+
+  /* ============ HOC SINH: tai khoan + lop + tin dung dong bo Cloud (them boi Claude) ============
+     Xem giai thich STUDENT_AUTH_DOMAIN o tren. Quy uoc: document Firestore students/{uid} dung
+     DUNG Firebase Auth UID cua hoc sinh do lam ID — giong het cach saveTest() dung test.id lam ID,
+     de dam bao dong bo 1-1 va Security Rules xac thuc duoc "day dung la chinh hoc sinh nay". */
+  secondaryAuth:null,
+  getSecondaryAuth:function(){
+    if(!this.secondaryAuth){
+      var appName = 'studentAccountCreator';
+      var secApp;
+      try{ secApp = firebase.app(appName); }catch(e){ secApp = firebase.initializeApp(FIREBASE_CONFIG, appName); }
+      this.secondaryAuth = secApp.auth();
+    }
+    return this.secondaryAuth;
+  },
+  /* Tao 1 tai khoan Firebase Auth MOI cho hoc sinh bang app Firebase "phu" (secondary) de KHONG
+     lam dang xuat giao vien dang dang nhap o app chinh. Tra ve uid moi qua cb(true, newUid). */
+  createStudentAuthAccount:function(username, password, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var email = studentUsernameToEmail(username);
+    var secAuth = this.getSecondaryAuth();
+    secAuth.createUserWithEmailAndPassword(email, password).then(function(cred){
+      var newUid = cred.user.uid;
+      secAuth.signOut().then(function(){ cb(true, newUid); }, function(){ cb(true, newUid); });
+    }).catch(function(e){
+      var msg = (e && e.code==='auth/email-already-in-use') ? 'Tên đăng nhập đã tồn tại, hãy chọn tên khác.'
+        : ((e && e.code==='auth/weak-password') ? 'Mật khẩu quá ngắn (tối thiểu 6 ký tự).' : (e && e.message));
+      cb(false, msg);
+    });
+  },
+  /* Hoc sinh dang nhap tu BAT KY thiet bi nao qua Firebase Auth (email gia lap tu username).
+     Sau khi dang nhap thanh cong, App.initCloud()'s onAuthStateChanged se tu dong tai ho so
+     (students/{uid}) va chuyen man hinh — ham nay chi can bao thanh cong/that bai. */
+  loginStudent:function(username, password, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var email = studentUsernameToEmail(username);
+    this.auth.signInWithEmailAndPassword(email, password).then(function(){ cb(true); })
+      .catch(function(e){
+        var code = e && e.code;
+        var msg = (code==='auth/wrong-password'||code==='auth/user-not-found'||code==='auth/invalid-credential'||code==='auth/invalid-email')
+          ? 'Sai tài khoản hoặc mật khẩu học sinh.' : (e && e.message);
+        cb(false, msg);
+      });
+  },
+  fetchMyStudentDoc:function(studentUid, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    this.db.collection('students').doc(studentUid).get().then(function(doc){
+      if(!doc.exists){ cb(false,'Không tìm thấy hồ sơ học sinh.'); return; }
+      var data = desanitizeArraysFromFirestore(doc.data());
+      data.id = studentUid;
+      cb(true, data);
+    }).catch(function(e){ cb(false, e && e.message); });
+  },
+  /* CHI Admin Cloud (giao vien) moi doc duoc TOAN BO danh sach — theo Security Rules se thiet lap. */
+  fetchAllStudents:function(cb){
+    if(!this.ready){ cb([]); return; }
+    this.db.collection('students').get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var data = desanitizeArraysFromFirestore(doc.data());
+        data.id = doc.id;
+        arr.push(data);
+      });
+      cb(arr);
+    }).catch(function(e){ console.error('CloudDB.fetchAllStudents lỗi:', e); cb([]); });
+  },
+  fetchAllClasses:function(cb){
+    if(!this.ready){ cb([]); return; }
+    this.db.collection('classes').get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){ var data=doc.data(); data.id=doc.id; arr.push(data); });
+      cb(arr);
+    }).catch(function(e){ console.error('CloudDB.fetchAllClasses lỗi:', e); cb([]); });
+  },
+  /* Ghi (tao moi/cap nhat, merge) 1 document hoc sinh. studentUid PHAI la Firebase Auth UID cua
+     chinh hoc sinh do (Security Rules cho phep chinh chu HOAC Admin Cloud ghi). */
+  saveStudentCloud:function(studentUid, data, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var clean = JSON.parse(JSON.stringify(data));
+    delete clean.id;
+    clean = sanitizeArraysForFirestore(clean);
+    this.db.collection('students').doc(studentUid).set(clean, {merge:true}).then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  deleteStudentCloud:function(studentUid, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    this.db.collection('students').doc(studentUid).delete().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  saveClassCloud:function(cls, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    this.db.collection('classes').doc(cls.id).set({name: cls.name}, {merge:true}).then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  deleteClassCloud:function(classId, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    this.db.collection('classes').doc(classId).delete().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  /* Tru tin dung AN TOAN bang Firestore Transaction (doc so du MOI NHAT tren Cloud roi moi quyet
+     dinh, khong dung cache tren may) — tranh bam nhanh 2 lan / mo 2 tab lam tru tien 2 lan. */
+  spendStudentCredit:function(studentUid, cost, reason, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var ref = this.db.collection('students').doc(studentUid);
+    this.db.runTransaction(function(tx){
+      return tx.get(ref).then(function(doc){
+        if(!doc.exists) throw new Error('Không tìm thấy hồ sơ học sinh.');
+        var data = doc.data();
+        var balance = data.credits||0;
+        if(balance < cost){ throw new Error('INSUFFICIENT_CREDIT'); }
+        var newBalance = balance - cost;
+        var log = desanitizeArraysFromFirestore(data.creditLog||[]);
+        log.push({id: uid('cl'), delta: -cost, reason: reason, at: Date.now()});
+        tx.update(ref, {credits: newBalance, creditLog: sanitizeArraysForFirestore(log)});
+        return {newBalance: newBalance, newLog: log};
+      });
+    }).then(function(result){ cb(true, result); })
+    .catch(function(e){
+      if(e && e.message==='INSUFFICIENT_CREDIT'){ cb(false, 'INSUFFICIENT_CREDIT'); return; }
+      cb(false, e && e.message);
+    });
+  },
+  /* Nap them tin dung (giao vien) — cung dung transaction de cong don an toan. */
+  addStudentCredit:function(studentUid, amount, reason, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    var ref = this.db.collection('students').doc(studentUid);
+    this.db.runTransaction(function(tx){
+      return tx.get(ref).then(function(doc){
+        if(!doc.exists) throw new Error('Không tìm thấy hồ sơ học sinh.');
+        var data = doc.data();
+        var newBalance = (data.credits||0) + amount;
+        var log = desanitizeArraysFromFirestore(data.creditLog||[]);
+        log.push({id: uid('cl'), delta: amount, reason: reason, at: Date.now()});
+        tx.update(ref, {credits: newBalance, creditLog: sanitizeArraysForFirestore(log)});
+        return {newBalance: newBalance, newLog: log};
+      });
+    }).then(function(result){ cb(true, result); })
+    .catch(function(e){ cb(false, e && e.message); });
+  }
 };
 
 var DB_KEY = 'mocktest_db_v1';
@@ -50979,6 +51129,49 @@ var App = {
       DB.mergeCloudTests(cloudTests);
       self.render();
     });
+    this.wireAuthStateRouting();
+  },
+  /* Theo doi trang thai dang nhap Firebase de TU DONG khoi phuc phien (giao vien HOAC hoc sinh)
+     moi khi tai lai trang, va de MOI THIET BI deu thay dung tai khoan/tin dung tren Cloud thay vi
+     localStorage rieng tung may (them boi Claude — sua loi tin dung khong dong bo giua cac thiet
+     bi). Phan biet giao vien/hoc sinh bang cach kiem tra co document students/{uid} hay khong:
+     hoc sinh luon co doc nay (tao luc dang ky/duoc giao vien cap), tai khoan giao vien Admin Cloud
+     thi khong bao gio co doc students/{uid} tuong ung. */
+  wireAuthStateRouting:function(){
+    var self = this;
+    CloudDB.auth.onAuthStateChanged(function(user){
+      if(self._suppressAuthRoute) return;
+      var cameFromLoginScreen = (!self.state.role || self.state.view==='login');
+      if(!user){
+        if(self.state.role){ self.state.role=null; self.state.user=null; self.goto('login'); }
+        return;
+      }
+      var looksLikeStudentEmail = String(user.email||'').indexOf('@'+STUDENT_AUTH_DOMAIN) >= 0;
+      CloudDB.fetchMyStudentDoc(user.uid, function(found, studentDataOrErr){
+        if(found){
+          var db = DB.get();
+          db.students = [studentDataOrErr];
+          self.state.role='student'; self.state.user=studentDataOrErr;
+          if(cameFromLoginScreen) self.goto('studentPractice'); else self.render();
+        } else if(looksLikeStudentEmail){
+          CloudDB.auth.signOut();
+          self.state.role=null; self.state.user=null;
+          self.state.loginError = 'Tài khoản học sinh này đã bị xoá hoặc không hợp lệ. Liên hệ giáo viên.';
+          self.goto('login');
+        } else {
+          var db2 = DB.get();
+          self.state.role='teacher'; self.state.user=db2.teacher;
+          CloudDB.fetchAllStudents(function(students){
+            CloudDB.fetchAllClasses(function(classes){
+              var db3 = DB.get();
+              db3.students = students;
+              db3.classes = classes;
+              if(cameFromLoginScreen) self.goto('teacherDashboard'); else self.render();
+            });
+          });
+        }
+      });
+    });
   },
   /* Goi ngay sau khi tao/sua 1 de thi tren may — NEU dang dang nhap Admin Cloud thi tu dong day
      de len Cloud de moi hoc sinh o moi thiet bi khac deu thay ban moi nhat. Neu chua dang nhap
@@ -51174,18 +51367,48 @@ var App = {
     var username = f.username.value.trim();
     var password = f.password.value;
     if(!name || !username || !password){ alert('Vui lòng điền đầy đủ thông tin.'); return false; }
-    var db = DB.get();
-    if(db.students.some(function(s){return s.username===username;})){
-      alert('Tên đăng nhập đã tồn tại, hãy chọn tên khác.'); return false;
+    var self = this;
+    if(!isCloudConfigured()){
+      var db = DB.get();
+      if(db.students.some(function(s){return s.username===username;})){
+        alert('Tên đăng nhập đã tồn tại, hãy chọn tên khác.'); return false;
+      }
+      var stu = {id:uid('st'), name:name, username:username, password:password, classId:null, selfRegistered:true,
+        credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Quà tặng dùng thử khi đăng ký (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}], timeMultiplier:1};
+      db.students.push(stu);
+      DB.save();
+      this.closeModal();
+      this.state.role='student'; this.state.user=stu;
+      this.goto('studentPractice');
+      this.showToast('🎉 Đăng ký thành công! Chào mừng '+name+' đến với MockTest — bạn được tặng 30 tín dụng, đủ mở 3 đề cao cấp bất kỳ để dùng thử.', 'success');
+      return false;
     }
-    var stu = {id:uid('st'), name:name, username:username, password:password, classId:null, selfRegistered:true,
-      credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Quà tặng dùng thử khi đăng ký (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}], timeMultiplier:1};
-    db.students.push(stu);
-    DB.save();
-    this.closeModal();
-    this.state.role='student'; this.state.user=stu;
-    this.goto('studentPractice');
-    this.showToast('🎉 Đăng ký thành công! Chào mừng '+name+' đến với MockTest — bạn được tặng 30 tín dụng, đủ mở 3 đề cao cấp bất kỳ để dùng thử.', 'success');
+    if(!/^[a-zA-Z0-9_.]{3,}$/.test(username)){ alert('Tên đăng nhập chỉ gồm chữ, số, dấu chấm/gạch dưới, tối thiểu 3 ký tự.'); return false; }
+    if(password.length < 6){ alert('Mật khẩu tối thiểu 6 ký tự.'); return false; }
+    this.showToast('⏳ Đang tạo tài khoản...', 'info');
+    this._suppressAuthRoute = true;
+    CloudDB.createStudentAuthAccount(username, password, function(ok, uidOrErr){
+      if(!ok){ self._suppressAuthRoute=false; self.showToast('⚠️ '+uidOrErr, 'error'); return; }
+      var newUid = uidOrErr;
+      var email = studentUsernameToEmail(username);
+      CloudDB.auth.signInWithEmailAndPassword(email, password).then(function(){
+        var stuData = {id:newUid, name:name, username:username, classId:null, selfRegistered:true,
+          credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Quà tặng dùng thử khi đăng ký (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}], timeMultiplier:1};
+        CloudDB.saveStudentCloud(newUid, stuData, function(ok2, err2){
+          self._suppressAuthRoute = false;
+          self.closeModal();
+          if(!ok2){ self.showToast('⚠️ Tạo hồ sơ thất bại: '+err2, 'error'); return; }
+          var db = DB.get();
+          db.students = [stuData];
+          self.state.role='student'; self.state.user=stuData;
+          self.goto('studentPractice');
+          self.showToast('🎉 Đăng ký thành công! Chào mừng '+name+' đến với MockTest — bạn được tặng 30 tín dụng, đủ mở 3 đề cao cấp bất kỳ để dùng thử.', 'success');
+        });
+      }).catch(function(e){
+        self._suppressAuthRoute = false;
+        self.showToast('⚠️ Đăng ký tài khoản thành công nhưng đăng nhập thất bại: '+(e&&e.message)+'. Hãy thử đăng nhập lại.', 'error');
+      });
+    });
     return false;
   },
   submitLogin:function(e){
@@ -51193,27 +51416,48 @@ var App = {
     var f = e.target;
     var u = f.username.value.trim();
     var p = f.password.value;
-    var db = DB.get();
+    var self = this;
+    if(!isCloudConfigured()){
+      /* Cloud chua cau hinh (vd moi dev/test) — giu hanh vi cuc bo cu, khong doi. */
+      var db = DB.get();
+      if(this.state.loginRole==='teacher'){
+        if(u===db.teacher.username && p===db.teacher.password){
+          this.state.role='teacher'; this.state.user=db.teacher;
+          this.goto('teacherDashboard');
+        } else {
+          this.state.loginError = 'Sai tài khoản hoặc mật khẩu giáo viên.'; this.render();
+        }
+      } else {
+        var stu = db.students.find(function(s){ return s.username===u && s.password===p; });
+        if(stu){
+          this.state.role='student'; this.state.user=stu;
+          this.goto('studentPractice');
+        } else {
+          this.state.loginError = 'Sai tài khoản hoặc mật khẩu học sinh.'; this.render();
+        }
+      }
+      return false;
+    }
+    this.state.loginError='';
+    this.state.loginPending = true;
+    this.render();
     if(this.state.loginRole==='teacher'){
-      if(u===db.teacher.username && p===db.teacher.password){
-        this.state.role='teacher'; this.state.user=db.teacher;
-        this.goto('teacherDashboard');
-      } else {
-        this.state.loginError = 'Sai tài khoản hoặc mật khẩu giáo viên.'; this.render();
-      }
+      CloudDB.loginAdmin(u, p, function(ok, info){
+        self.state.loginPending = false;
+        if(!ok){ self.state.loginError = 'Sai email hoặc mật khẩu Admin (' + info + ').'; self.render(); }
+        /* ok=true: wireAuthStateRouting() se tu dong nhan dang va chuyen sang Bảng điều khiển. */
+      });
     } else {
-      var stu = db.students.find(function(s){ return s.username===u && s.password===p; });
-      if(stu){
-        this.state.role='student'; this.state.user=stu;
-        this.goto('studentPractice');
-      } else {
-        this.state.loginError = 'Sai tài khoản hoặc mật khẩu học sinh.'; this.render();
-      }
+      CloudDB.loginStudent(u, p, function(ok, info){
+        self.state.loginPending = false;
+        if(!ok){ self.state.loginError = info || 'Sai tài khoản hoặc mật khẩu học sinh.'; self.render(); }
+      });
     }
     return false;
   },
 
   logout:function(){
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.auth){ CloudDB.auth.signOut(); }
     this.state.role=null; this.state.user=null;
     this.goto('login');
   },
@@ -51367,13 +51611,24 @@ var App = {
     var name = e.target.name.value.trim();
     if(!name) return false;
     var db = DB.get();
+    var cls;
     if(classId){
-      var cls = db.classes.find(function(c){return c.id===classId;});
+      cls = db.classes.find(function(c){return c.id===classId;});
       cls.name = name;
     } else {
-      db.classes.push({id:uid('c'), name:name});
+      cls = {id:uid('c'), name:name};
+      db.classes.push(cls);
     }
-    DB.save(); this.closeModal(); this.render();
+    this.closeModal(); this.render();
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      var self = this;
+      CloudDB.saveClassCloud(cls, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không đồng bộ được lớp lên Cloud: '+info, 'error');
+        else self.render();
+      });
+    } else {
+      DB.save();
+    }
     return false;
   },
   deleteClass:function(classId){
@@ -51382,7 +51637,15 @@ var App = {
     if(hasStudents){ alert('Không thể xóa lớp còn học sinh. Hãy chuyển/xóa học sinh trước.'); return; }
     if(!confirm('Xóa lớp học này?')) return;
     db.classes = db.classes.filter(function(c){return c.id!==classId;});
-    DB.save(); this.render();
+    this.render();
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      var self = this;
+      CloudDB.deleteClassCloud(classId, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không xoá được lớp trên Cloud: '+info, 'error');
+      });
+    } else {
+      DB.save();
+    }
   },
 
   openStudentModal:function(studentId){
@@ -51392,14 +51655,17 @@ var App = {
       return '<option value="'+c.id+'" '+(stu&&stu.classId===c.id?'selected':'')+'>'+esc(c.name)+'</option>';
     }).join('');
     if(db.classes.length===0) classOptions = '<option value="">— Chưa có lớp, hãy tạo lớp trước —</option>';
+    var passwordFieldHtml = (stu && isCloudConfigured())
+      ? '<div><label>Mật khẩu</label><div class="hint" style="margin-top:8px">Không đổi được ở đây (tài khoản Cloud) — liên hệ kỹ thuật nếu học sinh quên mật khẩu.</div></div>'
+      : '<div><label>Mật khẩu</label><input type="text" name="password" required value="'+esc(stu?stu.password:'123456')+'"></div>';
     var html = ''+
       '<h3>'+(stu?'Sửa học sinh':'Thêm học sinh')+'</h3>'+
       '<form onsubmit="return App.submitStudentForm(event,\''+(studentId||'')+'\')">'+
         '<label>Họ và tên</label>'+
         '<input type="text" name="name" required value="'+esc(stu?stu.name:'')+'">'+
         '<div class="form-row">'+
-          '<div><label>Tên đăng nhập</label><input type="text" name="username" required value="'+esc(stu?stu.username:'')+'"></div>'+
-          '<div><label>Mật khẩu</label><input type="text" name="password" required value="'+esc(stu?stu.password:'123456')+'"></div>'+
+          '<div><label>Tên đăng nhập</label><input type="text" name="username" required value="'+esc(stu?stu.username:'')+'" '+((stu&&isCloudConfigured())?'readonly':'')+'></div>'+
+          passwordFieldHtml+
         '</div>'+
         '<label>Lớp</label>'+
         '<select name="classId" required>'+classOptions+'</select>'+
@@ -51420,26 +51686,63 @@ var App = {
   submitStudentForm:function(e, studentId){
     e.preventDefault();
     var f = e.target;
-    var name=f.name.value.trim(), username=f.username.value.trim(), password=f.password.value.trim(), classId=f.classId.value;
+    var name=f.name.value.trim(), username=f.username.value.trim(), classId=f.classId.value;
+    var password = f.password ? f.password.value.trim() : null;
     var timeMultiplier = parseFloat(f.timeMultiplier.value)||1;
-    if(!name||!username||!password||!classId) return false;
+    if(!name||!username||!classId) return false;
+    if(!studentId && !password){ alert('Vui lòng nhập mật khẩu.'); return false; }
     var db = DB.get();
     var dup = db.students.find(function(s){return s.username===username && s.id!==studentId;});
     if(dup){ alert('Tên đăng nhập đã tồn tại, hãy chọn tên khác.'); return false; }
-    if(studentId){
-      var stu = db.students.find(function(s){return s.id===studentId;});
-      stu.name=name; stu.username=username; stu.password=password; stu.classId=classId; stu.timeMultiplier=timeMultiplier;
-    } else {
-      db.students.push({id:uid('st'), name:name, username:username, password:password, classId:classId, timeMultiplier:timeMultiplier, credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]});
+    var self = this;
+    if(!isCloudConfigured()){
+      if(studentId){
+        var stu = db.students.find(function(s){return s.id===studentId;});
+        stu.name=name; stu.username=username; stu.password=password; stu.classId=classId; stu.timeMultiplier=timeMultiplier;
+      } else {
+        db.students.push({id:uid('st'), name:name, username:username, password:password, classId:classId, timeMultiplier:timeMultiplier, credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]});
+      }
+      DB.save(); this.closeModal(); this.render();
+      return false;
     }
-    DB.save(); this.closeModal(); this.render();
+    if(studentId){
+      var stu2 = db.students.find(function(s){return s.id===studentId;});
+      stu2.name=name; stu2.classId=classId; stu2.timeMultiplier=timeMultiplier;
+      this.closeModal(); this.render();
+      CloudDB.saveStudentCloud(studentId, {name:name, classId:classId, timeMultiplier:timeMultiplier}, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không lưu được lên Cloud: '+info, 'error'); else self.render();
+      });
+    } else {
+      this.showToast('⏳ Đang tạo tài khoản...', 'info');
+      CloudDB.createStudentAuthAccount(username, password, function(ok, uidOrErr){
+        if(!ok){ self.showToast('⚠️ '+uidOrErr, 'error'); return; }
+        var newUid = uidOrErr;
+        var stuData = {id:newUid, name:name, username:username, classId:classId, timeMultiplier:timeMultiplier,
+          credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]};
+        CloudDB.saveStudentCloud(newUid, stuData, function(ok2, err2){
+          self.closeModal();
+          if(!ok2){ self.showToast('⚠️ Tạo tài khoản thất bại lúc lưu hồ sơ: '+err2, 'error'); return; }
+          db.students.push(stuData);
+          self.render();
+          self.showToast('✅ Đã tạo tài khoản cho '+name+'.', 'success');
+        });
+      });
+    }
     return false;
   },
   deleteStudent:function(studentId){
     if(!confirm('Xóa học sinh này? Kết quả thi liên quan (nếu có) vẫn được giữ lại trong lịch sử.')) return;
     var db = DB.get();
     db.students = db.students.filter(function(s){return s.id!==studentId;});
-    DB.save(); this.render();
+    this.render();
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      var self = this;
+      CloudDB.deleteStudentCloud(studentId, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không xoá được học sinh trên Cloud: '+info, 'error');
+      });
+    } else {
+      DB.save();
+    }
   },
   openCreditModal:function(studentId){
     var db = DB.get();
@@ -51469,11 +51772,24 @@ var App = {
     var db = DB.get();
     var stu = db.students.find(function(s){return s.id===studentId;});
     if(!stu) return false;
-    stu.credits = (stu.credits||0) + amount;
-    stu.creditLog = stu.creditLog || [];
-    stu.creditLog.push({id:uid('cl'), delta:amount, reason:reason, at:Date.now()});
-    DB.save(); this.closeModal(); this.render();
-    this.showToast('💎 Đã nạp '+amount+' tín dụng cho '+stu.name+'. Số dư mới: '+stu.credits, 'success');
+    var self = this;
+    if(!isCloudConfigured()){
+      stu.credits = (stu.credits||0) + amount;
+      stu.creditLog = stu.creditLog || [];
+      stu.creditLog.push({id:uid('cl'), delta:amount, reason:reason, at:Date.now()});
+      DB.save(); this.closeModal(); this.render();
+      this.showToast('💎 Đã nạp '+amount+' tín dụng cho '+stu.name+'. Số dư mới: '+stu.credits, 'success');
+      return false;
+    }
+    this.closeModal();
+    this.showToast('⏳ Đang nạp tín dụng...', 'info');
+    CloudDB.addStudentCredit(studentId, amount, reason, function(ok, info){
+      if(!ok){ self.showToast('⚠️ Nạp tín dụng thất bại: '+info, 'error'); return; }
+      stu.credits = info.newBalance;
+      stu.creditLog = info.newLog;
+      self.render();
+      self.showToast('💎 Đã nạp '+amount+' tín dụng cho '+stu.name+'. Số dư mới: '+stu.credits, 'success');
+    });
     return false;
   },
 
@@ -51503,19 +51819,58 @@ var App = {
     var lines = f.bulk.value.split('\n').map(function(l){return l.trim();}).filter(Boolean);
     if(lines.length===0) return false;
     var db = DB.get();
-    var created = 0;
+    var self = this;
+    if(!isCloudConfigured()){
+      var created = 0;
+      lines.forEach(function(line){
+        var parts = line.split(',').map(function(p){return p.trim();});
+        var name = parts[0]; if(!name) return;
+        var username = parts[1] || (name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,'') + Math.floor(Math.random()*900+100));
+        var password = parts[2] || '123456';
+        var i=1, base=username;
+        while(db.students.some(function(s){return s.username===username;})){ username = base+i; i++; }
+        db.students.push({id:uid('st'), name:name, username:username, password:password, classId:classId, timeMultiplier:1, credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]});
+        created++;
+      });
+      DB.save(); this.closeModal(); this.render();
+      alert('Đã tạo '+created+' tài khoản học sinh.');
+      return false;
+    }
+    var parsed = [];
     lines.forEach(function(line){
       var parts = line.split(',').map(function(p){return p.trim();});
       var name = parts[0]; if(!name) return;
       var username = parts[1] || (name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,'') + Math.floor(Math.random()*900+100));
       var password = parts[2] || '123456';
       var i=1, base=username;
-      while(db.students.some(function(s){return s.username===username;})){ username = base+i; i++; }
-      db.students.push({id:uid('st'), name:name, username:username, password:password, classId:classId, timeMultiplier:1, credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]});
-      created++;
+      var existingUsernames = db.students.map(function(s){return s.username;}).concat(parsed.map(function(p){return p.username;}));
+      while(existingUsernames.indexOf(username)>=0){ username = base+i; i++; }
+      parsed.push({name:name, username:username, password:password});
     });
-    DB.save(); this.closeModal(); this.render();
-    alert('Đã tạo '+created+' tài khoản học sinh.');
+    if(!parsed.length){ this.closeModal(); alert('Không có dòng hợp lệ.'); return false; }
+    this.closeModal();
+    this.showToast('⏳ Đang tạo '+parsed.length+' tài khoản...', 'info');
+    var created2 = 0, failed = [];
+    function next(i){
+      if(i>=parsed.length){
+        self.render();
+        alert('Đã tạo '+created2+' tài khoản học sinh.'+(failed.length?(' Lỗi '+failed.length+' dòng: '+failed.join('; ')):''));
+        return;
+      }
+      var item = parsed[i];
+      CloudDB.createStudentAuthAccount(item.username, item.password, function(ok, uidOrErr){
+        if(!ok){ failed.push(item.name+' ('+uidOrErr+')'); next(i+1); return; }
+        var newUid = uidOrErr;
+        var stuData = {id:newUid, name:item.name, username:item.username, classId:classId, timeMultiplier:1,
+          credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]};
+        CloudDB.saveStudentCloud(newUid, stuData, function(ok2){
+          if(ok2){ db.students.push(stuData); created2++; } else { failed.push(item.name+' (lỗi lưu hồ sơ)'); }
+          next(i+1);
+        });
+      });
+    }
+    next(0);
+    return false;
   },
 
   setUserSearch:function(v){ this.state.userSearch=v; this.render(); },
@@ -53509,21 +53864,44 @@ var App = {
     var db = DB.get();
     return db.submissions.some(function(s){return s.testId===test.id && s.studentId===studentId;});
   },
-  chargePremiumIfNeeded:function(test, student){
-    if(!test.isPremium) return true;
-    if(this.isTestUnlockedFor(test, student.id)) return true;
+  /* Chuyen sang bat dong bo (callback) de co the tru tin dung AN TOAN qua Firestore Transaction
+     tren Cloud (them boi Claude) — thay vi chi sua so du trong bo nho roi luu localStorage nhu
+     truoc (de bi mat dong bo giua cac thiet bi / khong chinh xac neu mo nhieu tab). cb(true) neu
+     da mo khoa thanh cong (hoac de khong phai premium / da mo khoa san), cb(false) neu that bai. */
+  chargePremiumIfNeeded:function(test, student, cb){
+    if(!test.isPremium){ cb(true); return; }
+    if(this.isTestUnlockedFor(test, student.id)){ cb(true); return; }
     var cost = test.creditCost||0;
     var balance = student.credits||0;
     if(balance < cost){
       this.showToast('💎 Đề "'+test.title+'" cần '+cost+' tín dụng để mở khóa. Bạn còn '+balance+' tín dụng — hãy liên hệ admin (giáo viên) để được cấp thêm tín dụng.', 'error');
-      return false;
+      cb(false);
+      return;
     }
-    student.credits = balance - cost;
-    student.creditLog = student.creditLog || [];
-    student.creditLog.push({id:uid('cl'), delta:-cost, reason:'Mở khóa đề "'+test.title+'"', at:Date.now()});
-    DB.save();
-    this.showToast('💎 Đã dùng '+cost+' tín dụng để mở khóa đề "'+test.title+'". Số dư còn lại: '+student.credits+' tín dụng.', 'success');
-    return true;
+    var self = this;
+    if(isCloudConfigured() && CloudDB.ready && student.id){
+      CloudDB.spendStudentCredit(student.id, cost, 'Mở khóa đề "'+test.title+'"', function(ok, info){
+        if(!ok){
+          var msg = (info==='INSUFFICIENT_CREDIT')
+            ? '💎 Số dư tín dụng trên Cloud không đủ (có thể vừa dùng ở thiết bị khác) — hãy tải lại trang và thử lại.'
+            : ('⚠️ Không trừ được tín dụng: '+info);
+          self.showToast(msg, 'error');
+          cb(false);
+          return;
+        }
+        student.credits = info.newBalance;
+        student.creditLog = info.newLog;
+        self.showToast('💎 Đã dùng '+cost+' tín dụng để mở khóa đề "'+test.title+'". Số dư còn lại: '+student.credits+' tín dụng.', 'success');
+        cb(true);
+      });
+    } else {
+      student.credits = balance - cost;
+      student.creditLog = student.creditLog || [];
+      student.creditLog.push({id:uid('cl'), delta:-cost, reason:'Mở khóa đề "'+test.title+'"', at:Date.now()});
+      DB.save();
+      this.showToast('💎 Đã dùng '+cost+' tín dụng để mở khóa đề "'+test.title+'". Số dư còn lại: '+student.credits+' tín dụng.', 'success');
+      cb(true);
+    }
   },
   /* He so nhan them gio khi hoc sinh CHU DONG chon "on ky" luc bat dau luyen tap tu do (KHONG
      ap dung cho bai thi chinh thuc/giao bai — xem enterExam() rieng, khong bi anh huong). */
@@ -53537,19 +53915,22 @@ var App = {
     var student = this.state.user;
     var test = db.tests.find(function(t){return t.id===testId;});
     if(!test) return;
-    if(!this.chargePremiumIfNeeded(test, student)) return;
-    var existing = db.submissions.find(function(s){return s.testId===testId && s.studentId===student.id && s.assignmentId===null && s.status==='in-progress' && !s.skillFilter;});
-    if(!existing){
-      existing = {id:uid('sub'), assignmentId:null, testId:testId, studentId:student.id, answers:{}, startTime:Date.now(), submitTime:null, status:'in-progress'};
-      if(timeChoice==='unlimited'){
-        existing.noTimeLimit = true;
-      } else if(timeChoice && timeChoice!=='x1'){
-        existing.durationMinutes = Math.round(test.duration * this.practiceTimeMultiplier(timeChoice));
+    var self = this;
+    this.chargePremiumIfNeeded(test, student, function(ok){
+      if(!ok) return;
+      var existing = db.submissions.find(function(s){return s.testId===testId && s.studentId===student.id && s.assignmentId===null && s.status==='in-progress' && !s.skillFilter;});
+      if(!existing){
+        existing = {id:uid('sub'), assignmentId:null, testId:testId, studentId:student.id, answers:{}, startTime:Date.now(), submitTime:null, status:'in-progress'};
+        if(timeChoice==='unlimited'){
+          existing.noTimeLimit = true;
+        } else if(timeChoice && timeChoice!=='x1'){
+          existing.durationMinutes = Math.round(test.duration * self.practiceTimeMultiplier(timeChoice));
+        }
+        db.submissions.push(existing);
+        DB.save();
       }
-      db.submissions.push(existing);
-      DB.save();
-    }
-    this.goto('studentExam', {submissionId:existing.id});
+      self.goto('studentExam', {submissionId:existing.id});
+    });
   },
   /* ---------- Luyện tập theo từng kỹ năng / Part (giống thư viện đề của IELTS Guru) ---------- */
   getTestSkillBreakdown:function(test){
@@ -53927,33 +54308,36 @@ var App = {
     var student = this.state.user;
     var test = db.tests.find(function(t){return t.id===testId;});
     if(!test) return;
-    if(!this.chargePremiumIfNeeded(test, student)) return;
-    var partKey = (part===null||part===undefined||part==='') ? null : Number(part);
-    var filtered = test.questions.filter(function(q){
-      if(q.skill!==skill) return false;
-      if(partKey!==null && Number(q.part)!==partKey) return false;
-      return true;
-    });
-    if(!filtered.length){ this.showToast('Không tìm thấy câu hỏi phù hợp trong phần này.', 'error'); return; }
-    var ids = filtered.map(function(q){return q.id;});
-    var existing = db.submissions.find(function(s){
-      return s.testId===testId && s.studentId===student.id && s.assignmentId===null && s.status==='in-progress' &&
-        s.skillFilter===skill && (s.partFilter==null?null:Number(s.partFilter))===partKey;
-    });
-    if(!existing){
-      var baseMinutes = this.getPartDuration(test, skill, partKey);
-      existing = {id:uid('sub'), assignmentId:null, testId:testId, studentId:student.id, answers:{},
-        startTime:Date.now(), submitTime:null, status:'in-progress',
-        questionIds:ids, skillFilter:skill, partFilter:partKey, durationMinutes:baseMinutes};
-      if(timeChoice==='unlimited'){
-        existing.noTimeLimit = true;
-      } else if(timeChoice && timeChoice!=='x1'){
-        existing.durationMinutes = Math.round(baseMinutes * this.practiceTimeMultiplier(timeChoice));
+    var self = this;
+    this.chargePremiumIfNeeded(test, student, function(ok){
+      if(!ok) return;
+      var partKey = (part===null||part===undefined||part==='') ? null : Number(part);
+      var filtered = test.questions.filter(function(q){
+        if(q.skill!==skill) return false;
+        if(partKey!==null && Number(q.part)!==partKey) return false;
+        return true;
+      });
+      if(!filtered.length){ self.showToast('Không tìm thấy câu hỏi phù hợp trong phần này.', 'error'); return; }
+      var ids = filtered.map(function(q){return q.id;});
+      var existing = db.submissions.find(function(s){
+        return s.testId===testId && s.studentId===student.id && s.assignmentId===null && s.status==='in-progress' &&
+          s.skillFilter===skill && (s.partFilter==null?null:Number(s.partFilter))===partKey;
+      });
+      if(!existing){
+        var baseMinutes = self.getPartDuration(test, skill, partKey);
+        existing = {id:uid('sub'), assignmentId:null, testId:testId, studentId:student.id, answers:{},
+          startTime:Date.now(), submitTime:null, status:'in-progress',
+          questionIds:ids, skillFilter:skill, partFilter:partKey, durationMinutes:baseMinutes};
+        if(timeChoice==='unlimited'){
+          existing.noTimeLimit = true;
+        } else if(timeChoice && timeChoice!=='x1'){
+          existing.durationMinutes = Math.round(baseMinutes * self.practiceTimeMultiplier(timeChoice));
+        }
+        db.submissions.push(existing);
+        DB.save();
       }
-      db.submissions.push(existing);
-      DB.save();
-    }
-    this.goto('studentExam', {submissionId:existing.id});
+      self.goto('studentExam', {submissionId:existing.id});
+    });
   },
   /* Man hinh chon THOI GIAN cho bai luyen tap tu do (KHONG dung cho bai thi chinh thuc/giao bai)
      -- de hoc sinh nao can on ky (lam cham, xem lai tung cau) co the tu cho them gio, hoac bo qua
@@ -53980,23 +54364,26 @@ var App = {
       else this.enterPractice(testId);
       return;
     }
-    if(!this.chargePremiumIfNeeded(test, student)) return;
-    var baseMinutes = skill ? this.getPartDuration(test, skill, partKey) : test.duration;
-    var partArg = (partKey===null) ? 'null' : String(partKey);
-    var html = ''+
-      '<h3>⏱️ Chọn thời gian làm bài</h3>'+
-      '<div class="hint" style="margin-bottom:12px">Đây là bài luyện tập tự do — bạn có thể chọn ôn kỹ với nhiều thời gian hơn để xem lại từng câu, hoặc làm đúng thời gian thật để tập quen áp lực khi thi thật.</div>'+
-      '<form onsubmit="return App.startPracticeFromModal(event,\''+testId+'\',\''+(skill||'')+'\','+partArg+')">'+
-        '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x1" checked> <label>⏱️ Thời gian chuẩn — '+baseMinutes+' phút (giống thi thật)</label></div>'+
-        '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x1.5"> <label>🐢 Ôn kỹ hơn — gấp 1,5 lần ('+Math.round(baseMinutes*1.5)+' phút)</label></div>'+
-        '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x2"> <label>🐢🐢 Ôn thật kỹ — gấp 2 lần ('+Math.round(baseMinutes*2)+' phút)</label></div>'+
-        '<div class="checkbox-row"><input type="radio" name="timeChoice" value="unlimited"> <label>♾️ Không giới hạn thời gian (làm thong thả, tự nộp bài khi xong)</label></div>'+
-        '<div class="modal-actions">'+
-          '<button type="button" class="btn" onclick="App.closeModal()">Hủy</button>'+
-          '<button type="submit" class="btn btn-primary">Bắt đầu làm bài</button>'+
-        '</div>'+
-      '</form>';
-    this.openModal(html);
+    var self = this;
+    this.chargePremiumIfNeeded(test, student, function(ok){
+      if(!ok) return;
+      var baseMinutes = skill ? self.getPartDuration(test, skill, partKey) : test.duration;
+      var partArg = (partKey===null) ? 'null' : String(partKey);
+      var html = ''+
+        '<h3>⏱️ Chọn thời gian làm bài</h3>'+
+        '<div class="hint" style="margin-bottom:12px">Đây là bài luyện tập tự do — bạn có thể chọn ôn kỹ với nhiều thời gian hơn để xem lại từng câu, hoặc làm đúng thời gian thật để tập quen áp lực khi thi thật.</div>'+
+        '<form onsubmit="return App.startPracticeFromModal(event,\''+testId+'\',\''+(skill||'')+'\','+partArg+')">'+
+          '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x1" checked> <label>⏱️ Thời gian chuẩn — '+baseMinutes+' phút (giống thi thật)</label></div>'+
+          '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x1.5"> <label>🐢 Ôn kỹ hơn — gấp 1,5 lần ('+Math.round(baseMinutes*1.5)+' phút)</label></div>'+
+          '<div class="checkbox-row"><input type="radio" name="timeChoice" value="x2"> <label>🐢🐢 Ôn thật kỹ — gấp 2 lần ('+Math.round(baseMinutes*2)+' phút)</label></div>'+
+          '<div class="checkbox-row"><input type="radio" name="timeChoice" value="unlimited"> <label>♾️ Không giới hạn thời gian (làm thong thả, tự nộp bài khi xong)</label></div>'+
+          '<div class="modal-actions">'+
+            '<button type="button" class="btn" onclick="App.closeModal()">Hủy</button>'+
+            '<button type="submit" class="btn btn-primary">Bắt đầu làm bài</button>'+
+          '</div>'+
+        '</form>';
+      self.openModal(html);
+    });
   },
   startPracticeFromModal:function(e, testId, skill, part){
     e.preventDefault();
@@ -54911,6 +55298,9 @@ var App = {
 
   renderLoginScreen:function(){
     var s=this.state;
+    var isTeacherCloudLogin = (s.loginRole==='teacher' && isCloudConfigured());
+    var userLabel = isTeacherCloudLogin ? 'Email Admin' : 'Tên đăng nhập';
+    var userInputType = isTeacherCloudLogin ? 'email' : 'text';
     return ''+
       '<div class="center-screen">'+
         '<div class="login-card">'+
@@ -54921,12 +55311,12 @@ var App = {
             '<button type="button" class="'+(s.loginRole==='student'?'active':'')+'" onclick="App.setLoginRole(\'student\')">Học sinh</button>'+
           '</div>'+
           '<form onsubmit="return App.submitLogin(event)">'+
-            '<label>Tên đăng nhập</label>'+
-            '<input type="text" name="username" required autocomplete="username">'+
+            '<label>'+userLabel+'</label>'+
+            '<input type="'+userInputType+'" name="username" required autocomplete="username">'+
             '<label>Mật khẩu</label>'+
             '<input type="password" name="password" required autocomplete="current-password">'+
             (s.loginError ? '<div class="login-error">'+esc(s.loginError)+'</div>' : '')+
-            '<button type="submit" class="btn btn-primary btn-block btn-pill" style="margin-top:18px">Đăng nhập</button>'+
+            '<button type="submit" class="btn btn-primary btn-block btn-pill" style="margin-top:18px" '+(s.loginPending?'disabled':'')+'>'+(s.loginPending?'Đang đăng nhập...':'Đăng nhập')+'</button>'+
           '</form>'+
           (s.loginRole==='student'
             ? '<div class="signup-cta">🎓 <b>Học sinh mới?</b> Không cần giáo viên cấp tài khoản — <a onclick="App.openSelfSignup()">đăng ký ngay để luyện thi thử miễn phí</a> theo từng môn/chứng chỉ.</div>'
