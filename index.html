@@ -51717,7 +51717,7 @@ var App = {
       CloudDB.createStudentAuthAccount(username, password, function(ok, uidOrErr){
         if(!ok){ self.showToast('⚠️ '+uidOrErr, 'error'); return; }
         var newUid = uidOrErr;
-        var stuData = {id:newUid, name:name, username:username, classId:classId, timeMultiplier:timeMultiplier,
+        var stuData = {id:newUid, name:name, username:username, password:password, classId:classId, timeMultiplier:timeMultiplier,
           credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]};
         CloudDB.saveStudentCloud(newUid, stuData, function(ok2, err2){
           self.closeModal();
@@ -51861,7 +51861,7 @@ var App = {
       CloudDB.createStudentAuthAccount(item.username, item.password, function(ok, uidOrErr){
         if(!ok){ failed.push(item.name+' ('+uidOrErr+')'); next(i+1); return; }
         var newUid = uidOrErr;
-        var stuData = {id:newUid, name:item.name, username:item.username, classId:classId, timeMultiplier:1,
+        var stuData = {id:newUid, name:item.name, username:item.username, password:item.password, classId:classId, timeMultiplier:1,
           credits:30, creditLog:[{id:uid('cl'), delta:30, reason:'Tín dụng miễn phí ban đầu (đủ mở 3 đề cao cấp bất kỳ)', at:Date.now()}]};
         CloudDB.saveStudentCloud(newUid, stuData, function(ok2){
           if(ok2){ db.students.push(stuData); created2++; } else { failed.push(item.name+' (lỗi lưu hồ sơ)'); }
