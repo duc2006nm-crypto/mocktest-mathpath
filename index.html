@@ -48864,6 +48864,69 @@ var CloudDB = {
     if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
     this.db.collection('students').doc(studentUid).delete().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
   },
+  fetchAllAssignments:function(cb){
+    if(!this.ready){ cb([]); return; }
+    this.db.collection('assignments').get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var data = desanitizeArraysFromFirestore(doc.data());
+        data.id = doc.id;
+        data.source = 'cloud';
+        arr.push(data);
+      });
+      cb(arr);
+    }).catch(function(e){ console.error('CloudDB.fetchAllAssignments lỗi:', e); cb([]); });
+  },
+  saveAssignmentCloud:function(assignment, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    var data = JSON.parse(JSON.stringify(assignment));
+    delete data.source;
+    data = sanitizeArraysForFirestore(data);
+    this.db.collection('assignments').doc(assignment.id).set(data).then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  deleteAssignmentCloud:function(assignmentId, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    var self = this;
+    this.db.collection('submissions').where('assignmentId','==',assignmentId).get().then(function(snap){
+      var batch = self.db.batch();
+      snap.forEach(function(doc){ batch.delete(doc.ref); });
+      batch.delete(self.db.collection('assignments').doc(assignmentId));
+      return batch.commit();
+    }).then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  saveSubmissionCloud:function(submission, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var data = JSON.parse(JSON.stringify(submission));
+    delete data.source;
+    data = sanitizeArraysForFirestore(data);
+    this.db.collection('submissions').doc(submission.id).set(data, {merge:true}).then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  fetchMySubmissions:function(studentUid, cb){
+    if(!this.ready){ cb([]); return; }
+    this.db.collection('submissions').where('studentId','==',studentUid).get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var data = desanitizeArraysFromFirestore(doc.data());
+        data.id = doc.id;
+        arr.push(data);
+      });
+      cb(arr);
+    }).catch(function(e){ console.error('CloudDB.fetchMySubmissions lỗi:', e); cb([]); });
+  },
+  fetchAllSubmissions:function(cb){
+    if(!this.ready){ cb([]); return; }
+    this.db.collection('submissions').get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var data = desanitizeArraysFromFirestore(doc.data());
+        data.id = doc.id;
+        arr.push(data);
+      });
+      cb(arr);
+    }).catch(function(e){ console.error('CloudDB.fetchAllSubmissions lỗi:', e); cb([]); });
+  },
   saveClassCloud:function(cls, cb){
     if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
     if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
@@ -48972,6 +49035,20 @@ var DB = {
     if(!d) return;
     var localOnly = (d.tests||[]).filter(function(t){ return t.source!=='cloud'; });
     d.tests = localOnly.concat(cloudTests||[]);
+  },
+  mergeCloudAssignments:function(cloudAssignments){
+    var d = this.data;
+    if(!d) return;
+    var localOnly = (d.assignments||[]).filter(function(a){ return a.source!=='cloud'; });
+    d.assignments = localOnly.concat(cloudAssignments||[]);
+  },
+  mergeCloudSubmissions:function(cloudSubmissions){
+    var d = this.data;
+    if(!d) return;
+    var cloudIds = {};
+    (cloudSubmissions||[]).forEach(function(s){ cloudIds[s.id] = true; });
+    var localOnly = (d.submissions||[]).filter(function(s){ return !cloudIds[s.id]; });
+    d.submissions = localOnly.concat(cloudSubmissions||[]);
   },
   seed:function(){
     var c1='c_'+uid(''), c2='c_'+uid('');
@@ -51129,6 +51206,10 @@ var App = {
       DB.mergeCloudTests(cloudTests);
       self.render();
     });
+    CloudDB.fetchAllAssignments(function(cloudAssignments){
+      DB.mergeCloudAssignments(cloudAssignments);
+      self.render();
+    });
     this.wireAuthStateRouting();
   },
   /* Theo doi trang thai dang nhap Firebase de TU DONG khoi phuc phien (giao vien HOAC hoc sinh)
@@ -51152,7 +51233,10 @@ var App = {
           var db = DB.get();
           db.students = [studentDataOrErr];
           self.state.role='student'; self.state.user=studentDataOrErr;
-          if(cameFromLoginScreen) self.goto('studentPractice'); else self.render();
+          CloudDB.fetchMySubmissions(user.uid, function(subs){
+            DB.mergeCloudSubmissions(subs);
+            if(cameFromLoginScreen) self.goto('studentPractice'); else self.render();
+          });
         } else if(looksLikeStudentEmail){
           CloudDB.auth.signOut();
           self.state.role=null; self.state.user=null;
@@ -51163,10 +51247,13 @@ var App = {
           self.state.role='teacher'; self.state.user=db2.teacher;
           CloudDB.fetchAllStudents(function(students){
             CloudDB.fetchAllClasses(function(classes){
-              var db3 = DB.get();
-              db3.students = students;
-              db3.classes = classes;
-              if(cameFromLoginScreen) self.goto('teacherDashboard'); else self.render();
+              CloudDB.fetchAllSubmissions(function(subs){
+                var db3 = DB.get();
+                db3.students = students;
+                db3.classes = classes;
+                DB.mergeCloudSubmissions(subs);
+                if(cameFromLoginScreen) self.goto('teacherDashboard'); else self.render();
+              });
             });
           });
         }
@@ -51189,6 +51276,17 @@ var App = {
     if(!(CloudDB.ready && CloudDB.currentAdmin)) return;
     CloudDB.deleteTest(testId, function(ok, info){
       if(!ok){ App.showToast('⚠️ Không xoá được trên Cloud: '+info, 'error'); App.render(); }
+    });
+  },
+  syncSubmissionToCloud:function(sub, opts){
+    if(!(isCloudConfigured() && CloudDB.ready)) return;
+    var showErrorToast = opts && opts.showErrorToast;
+    var self = this;
+    CloudDB.saveSubmissionCloud(sub, function(ok, err){
+      if(!ok){
+        if(window.console) console.error('Đồng bộ bài nộp lên Cloud thất bại:', err);
+        if(showErrorToast) self.showToast('⚠️ Đã lưu điểm trên máy nhưng KHÔNG đồng bộ được lên Cloud: '+err, 'error');
+      }
     });
   },
   /* Nut "Day len Cloud" THU CONG cho 1 de da co san (vi du: de duoc tao qua seed()/migrate() khi
@@ -53471,8 +53569,17 @@ var App = {
       if(checked.length===0){ alert('Vui lòng chọn ít nhất 1 học sinh.'); return false; }
       target = {type:'students', studentIds:checked};
     }
-    db.assignments.push({id:uid('assign'), testId:testId, target:target, code:randomCode(6), openAt:openAt, closeAt:closeAt, createdAt:Date.now()});
+    var newAssignment = {id:uid('assign'), testId:testId, target:target, code:randomCode(6), openAt:openAt, closeAt:closeAt, createdAt:Date.now()};
+    db.assignments.push(newAssignment);
     DB.save(); this.render();
+    var self = this;
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      newAssignment.source = 'cloud';
+      CloudDB.saveAssignmentCloud(newAssignment, function(ok, err){
+        if(!ok) self.showToast('⚠️ Đã lưu lượt giao bài trên máy nhưng KHÔNG đồng bộ được lên Cloud (học sinh ở thiết bị khác sẽ không thấy): '+err, 'error');
+        else self.render();
+      });
+    }
     return false;
   },
   deleteAssignment:function(assignmentId){
@@ -53481,6 +53588,12 @@ var App = {
     db.assignments = db.assignments.filter(function(a){return a.id!==assignmentId;});
     db.submissions = db.submissions.filter(function(s){return s.assignmentId!==assignmentId;});
     DB.save(); this.render();
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      var self = this;
+      CloudDB.deleteAssignmentCloud(assignmentId, function(ok, err){
+        if(!ok) self.showToast('⚠️ Không xoá được lượt giao bài này trên Cloud: '+err, 'error');
+      });
+    }
   },
 
   /* ================= CHẤM BÀI & KẾT QUẢ (Giáo viên) ================= */
@@ -53706,6 +53819,7 @@ var App = {
     sub.finalScore = grade.autoScore + manualSum;
     sub.status = 'graded';
     DB.save();
+    this.syncSubmissionToCloud(sub, {showErrorToast:true});
     if(grade.maxScore>0){ this.bumpProgress(sub.studentId, sub.finalScore/grade.maxScore); }
     delete this.state.gradeTemp[key];
     this.goto('teacherResults');
@@ -53928,6 +54042,7 @@ var App = {
         }
         db.submissions.push(existing);
         DB.save();
+        self.syncSubmissionToCloud(existing);
       }
       self.goto('studentExam', {submissionId:existing.id});
     });
@@ -54335,6 +54450,7 @@ var App = {
         }
         db.submissions.push(existing);
         DB.save();
+        self.syncSubmissionToCloud(existing);
       }
       self.goto('studentExam', {submissionId:existing.id});
     });
@@ -54493,6 +54609,7 @@ var App = {
       sub = {id:uid('sub'), assignmentId:assignmentId, testId:a.testId, studentId:student.id, answers:{}, startTime:now, submitTime:null, status:'in-progress'};
       db.submissions.push(sub);
       DB.save();
+      this.syncSubmissionToCloud(sub);
     }
     this.goto('studentExam', {submissionId:sub.id});
   },
@@ -54915,6 +55032,7 @@ var App = {
       sub.status = grade.needsManual ? 'awaiting-manual' : 'graded';
       sub.finalScore = grade.needsManual ? null : grade.autoScore;
       DB.save();
+      self.syncSubmissionToCloud(sub);
       if(grade.autoMaxScore>0){ self.bumpProgress(sub.studentId, grade.autoScore/grade.autoMaxScore); }
       if(isAuto) alert('Đã hết giờ làm bài. Bài của bạn đã được tự động nộp.');
       self.goto('studentResultDetail', {submissionId:submissionId});
