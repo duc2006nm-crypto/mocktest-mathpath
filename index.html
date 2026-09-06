@@ -48775,6 +48775,56 @@ var CloudDB = {
       });
     });
   },
+  /* ============ GIAO BAI BANG FILE TAI LEN (anh/Word/PDF) + BAI NOP cua hoc sinh ============
+     Them moi, KHONG dung lai duong dan 'audio/**' cua uploadAudio o tren (duong do co the dang bi
+     Storage Rules gioi han chi cho Admin/giao vien ghi). Dung 2 duong rieng:
+       - 'assignmentFiles/{assignmentId}/...' : giao vien tai bai tap len (giao vien da dang nhap
+         Admin Cloud → dung self.currentAdmin giong het uploadAudio de an toan, khong doi rule moi
+         neu Storage Rules hien tai da cho phep Admin ghi phong ngoai 'audio/**').
+       - 'submissionFiles/{uid}/{submissionId}/...' : hoc sinh (hoac giao vien) tai bai da lam len,
+         dung uid cua chinh nguoi dang dang nhap (hoc sinh dang nhap qua CUNG this.auth — xem
+         loginStudent ben duoi — nen firebase.auth().currentUser.uid la dung UID hoc sinh do).
+     LUU Y QUAN TRONG cho nguoi trien khai: neu Storage Rules cua project hien chi cho phep ghi vao
+     'audio/**', hai duong moi nay se bao loi "permission-denied" khi thu tai len — day la loi CAU
+     HINH RULES, khong phai loi code. Can vao Firebase Console → Storage → Rules, them:
+       match /assignmentFiles/{allPaths=**} { allow read: if request.auth!=null; allow write: if request.auth!=null; }
+       match /submissionFiles/{uid}/{allPaths=**} { allow read: if request.auth!=null; allow write: if request.auth!=null && request.auth.uid==uid; }
+     Cho toi khi rule duoc cap nhat, tinh nang nay se bao loi ro rang cho nguoi dung (khong lam
+     hong/anh huong gi den 'audio/**' hay bat ky chuc nang cu nao khac). */
+  uploadAssignmentFile:function(file, assignmentId, onProgress){
+    var self = this;
+    return new Promise(function(resolve, reject){
+      if(!self.ready || !self.storage){ reject(new Error('Cloud Storage chưa sẵn sàng.')); return; }
+      if(!self.currentAdmin){ reject(new Error('Bạn chưa đăng nhập Admin Cloud.')); return; }
+      var safeName = String(file.name||'file').replace(/[^a-zA-Z0-9._-]/g,'_');
+      var path = 'assignmentFiles/'+(assignmentId||'tmp')+'/'+Date.now()+'_'+safeName;
+      var ref = self.storage.ref().child(path);
+      var task = ref.put(file);
+      task.on('state_changed', function(snap){
+        if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100));
+      }, function(err){ reject(err); }, function(){
+        task.snapshot.ref.getDownloadURL().then(function(url){ resolve({url:url, name:file.name, type:file.type||'', size:file.size||0}); }, reject);
+      });
+    });
+  },
+  uploadSubmissionFile:function(file, submissionId, onProgress){
+    var self = this;
+    return new Promise(function(resolve, reject){
+      if(!self.ready || !self.storage){ reject(new Error('Cloud Storage chưa sẵn sàng.')); return; }
+      var curUser = self.auth && self.auth.currentUser;
+      if(!curUser){ reject(new Error('Bạn chưa đăng nhập.')); return; }
+      var safeName = String(file.name||'file').replace(/[^a-zA-Z0-9._-]/g,'_');
+      var path = 'submissionFiles/'+curUser.uid+'/'+(submissionId||'tmp')+'/'+Date.now()+'_'+safeName;
+      var ref = self.storage.ref().child(path);
+      var task = ref.put(file);
+      task.on('state_changed', function(snap){
+        if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100));
+      }, function(err){ reject(err); }, function(){
+        task.snapshot.ref.getDownloadURL().then(function(url){ resolve({url:url, name:file.name, type:file.type||'', size:file.size||0}); }, reject);
+      });
+    });
+  },
+
   logoutAdmin:function(){ if(this.ready) this.auth.signOut(); },
 
   /* ============ HOC SINH: tai khoan + lop + tin dung dong bo Cloud (them boi Claude) ============
@@ -53502,7 +53552,10 @@ var App = {
 
     var now = Date.now();
     var assignRows = db.assignments.map(function(a){
-      var t = db.tests.find(function(x){return x.id===a.testId;});
+      var isUpload = a.kind==='upload';
+      var t = isUpload ? null : db.tests.find(function(x){return x.id===a.testId;});
+      var titleText = isUpload ? (a.title||'Bài tập file tải lên') : (t?t.title:'—');
+      var kindBadge = isUpload ? ' <span class="badge badge-blue">📎 File tự soạn</span>' : '';
       var targetLabel = a.target.type==='class'
         ? (db.classes.find(function(c){return c.id===a.target.classId;})||{}).name || '—'
         : (a.target.studentIds||[]).length+' học sinh cụ thể';
@@ -53510,7 +53563,7 @@ var App = {
       var subs = db.submissions.filter(function(s){return s.assignmentId===a.id;});
       var submittedCount = subs.filter(function(s){return s.status!=='in-progress';}).length;
       return '<tr>'+
-        '<td><b>'+esc(t?t.title:'—')+'</b></td>'+
+        '<td><b>'+esc(titleText)+'</b>'+kindBadge+'</td>'+
         '<td>'+esc(targetLabel)+'</td>'+
         '<td>'+fmtDateTime(a.openAt)+' → '+fmtDateTime(a.closeAt)+'</td>'+
         '<td><span class="badge '+status.c+'">'+status.t+'</span></td>'+
@@ -53523,13 +53576,12 @@ var App = {
       '</tr>';
     }).join('');
 
-    return ''+
-      '<div class="topbar"><div><h2>Giao bài thi</h2><div class="sub">Giao đề thi chính thức cho cả lớp hoặc từng học sinh cụ thể, kèm thời gian mở/đóng.</div></div></div>'+
-      '<div class="card">'+
-        '<h3>Tạo lượt giao bài mới</h3>'+
-        (db.tests.length===0 ? '<div class="empty-state">Chưa có đề thi nào. Hãy tạo đề thi trước.</div>' :
-        '<form onsubmit="return App.submitAssign(event)">'+
-          '<label>Chọn đề thi</label><select name="testId">'+testOptions+'</select>'+
+    var contentTypeTabs = '<div class="role-tabs" style="max-width:420px;margin-bottom:12px">'+
+        '<button type="button" class="'+(this.assignContentType!=='upload'?'active':'')+'" onclick="App.setAssignContentType(\'test\')">Chọn từ đề thi</button>'+
+        '<button type="button" class="'+(this.assignContentType==='upload'?'active':'')+'" onclick="App.setAssignContentType(\'upload\')">📎 Tải file bài tập lên</button>'+
+      '</div>';
+
+    var targetAndTimeFieldsHtml =
           '<label>Giao cho</label>'+
           '<div class="role-tabs" style="max-width:320px">'+
             '<button type="button" class="'+(this.assignTargetType==='class'?'active':'')+'" onclick="App.setAssignTargetType(\'class\')">Cả lớp</button>'+
@@ -53541,18 +53593,47 @@ var App = {
           )+
           '<div class="form-row">'+
             '<div><label>Thời gian mở</label><input type="datetime-local" name="openAt" value="'+toDatetimeLocalValue(now)+'"></div>'+
-            '<div><label>Thời gian đóng</label><input type="datetime-local" name="closeAt" value="'+toDatetimeLocalValue(now+7*24*60*60000)+'"></div>'+
+            '<div><label>Hạn nộp / đóng</label><input type="datetime-local" name="closeAt" value="'+toDatetimeLocalValue(now+7*24*60*60000)+'"></div>'+
+          '</div>';
+
+    var newAssignFormHtml;
+    if(this.assignContentType==='upload'){
+      newAssignFormHtml = '<form onsubmit="return App.submitAssignUpload(event)">'+
+          '<label>Tiêu đề bài tập</label><input type="text" name="title" required placeholder="VD: Bài tập Unit 5 — làm vào vở rồi chụp ảnh nộp lại">'+
+          '<label>Mô tả / hướng dẫn (không bắt buộc)</label><textarea name="description" rows="3" placeholder="Hướng dẫn thêm cho học sinh…"></textarea>'+
+          '<label>File bài tập (ảnh, Word, PDF — có thể chọn nhiều file)</label>'+
+          '<input type="file" name="files" multiple accept="image/*,.pdf,.doc,.docx">'+
+          '<div class="hint" id="assignUploadProgressHint" style="margin-top:4px"></div>'+
+          targetAndTimeFieldsHtml+
+          '<div class="modal-actions" style="justify-content:flex-start;margin-top:16px">'+
+            '<button type="submit" class="btn btn-primary" id="assignUploadSubmitBtn">Giao bài ngay</button>'+
           '</div>'+
+        '</form>';
+    } else {
+      newAssignFormHtml = (db.tests.length===0 ? '<div class="empty-state">Chưa có đề thi nào. Hãy tạo đề thi trước.</div>' :
+        '<form onsubmit="return App.submitAssign(event)">'+
+          '<label>Chọn đề thi</label><select name="testId">'+testOptions+'</select>'+
+          targetAndTimeFieldsHtml+
           '<div class="modal-actions" style="justify-content:flex-start;margin-top:16px">'+
             '<button type="submit" class="btn btn-primary">Giao bài ngay</button>'+
           '</div>'+
-        '</form>')+
+        '</form>');
+    }
+
+    return ''+
+      '<div class="topbar"><div><h2>Giao bài</h2><div class="sub">Giao đề thi có sẵn hoặc tải file bài tập tự soạn (ảnh/Word/PDF) cho cả lớp hoặc từng học sinh cụ thể.</div></div></div>'+
+      '<div class="card">'+
+        '<h3>Tạo lượt giao bài mới</h3>'+
+        contentTypeTabs+
+        newAssignFormHtml+
       '</div>'+
       '<div class="card"><h3>Các lượt đã giao</h3>'+
-      (db.assignments.length ? '<div class="table-wrap"><table><thead><tr><th>Đề thi</th><th>Giao cho</th><th>Thời gian</th><th>Trạng thái</th><th>Nộp bài</th><th>Mã đề</th><th></th></tr></thead><tbody>'+assignRows+'</tbody></table></div>'
+      (db.assignments.length ? '<div class="table-wrap"><table><thead><tr><th>Đề thi / Bài tập</th><th>Giao cho</th><th>Thời gian</th><th>Trạng thái</th><th>Nộp bài</th><th>Mã đề</th><th></th></tr></thead><tbody>'+assignRows+'</tbody></table></div>'
         : '<div class="empty-state">Chưa giao bài nào.</div>')+
       '</div>';
   },
+  assignContentType:'test',
+  setAssignContentType:function(t){ this.assignContentType=t; this.render(); },
   submitAssign:function(e){
     e.preventDefault();
     var f = e.target;
@@ -53580,6 +53661,72 @@ var App = {
         else self.render();
       });
     }
+    return false;
+  },
+  /* Giao bai bang file tai len (anh/Word/PDF) — them moi, khong dung chung code voi submitAssign()
+     o tren de KHONG dong cham gi den luong "chon tu de thi" da hoat dong on dinh. */
+  submitAssignUpload:function(e){
+    e.preventDefault();
+    var f = e.target;
+    var db = DB.get();
+    var self = this;
+    var title = (f.title.value||'').trim();
+    var description = (f.description.value||'').trim();
+    var openAt = new Date(f.openAt.value).getTime();
+    var closeAt = new Date(f.closeAt.value).getTime();
+    if(!title){ alert('Vui lòng nhập tiêu đề bài tập.'); return false; }
+    if(closeAt<=openAt){ alert('Hạn nộp phải sau thời gian mở.'); return false; }
+    var fileList = f.files && f.files.files ? Array.prototype.slice.call(f.files.files) : [];
+    if(fileList.length===0){ alert('Vui lòng chọn ít nhất 1 file bài tập (ảnh/Word/PDF).'); return false; }
+    var MAX_FILE_MB = 15, MAX_FILES = 5;
+    if(fileList.length>MAX_FILES){ alert('Chỉ được chọn tối đa '+MAX_FILES+' file cho mỗi lượt giao bài.'); return false; }
+    for(var i=0;i<fileList.length;i++){
+      if(fileList[i].size > MAX_FILE_MB*1024*1024){ alert('File "'+fileList[i].name+'" vượt quá '+MAX_FILE_MB+'MB.'); return false; }
+    }
+    var target;
+    if(this.assignTargetType==='class'){
+      target = {type:'class', classId:f.classId.value};
+    } else {
+      var checked = Array.prototype.slice.call(f.querySelectorAll('input[name="studentIds"]:checked')).map(function(el){return el.value;});
+      if(checked.length===0){ alert('Vui lòng chọn ít nhất 1 học sinh.'); return false; }
+      target = {type:'students', studentIds:checked};
+    }
+    if(!(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin)){
+      alert('Cần đăng nhập Admin Cloud để giao bài bằng file tải lên (file cần được lưu lên Cloud Storage để học sinh ở thiết bị khác xem được).');
+      return false;
+    }
+    var submitBtn = document.getElementById('assignUploadSubmitBtn');
+    var progressHint = document.getElementById('assignUploadProgressHint');
+    if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Đang tải file lên…'; }
+    var assignmentId = uid('assign');
+    var uploadedFiles = [];
+    var uploadNext = function(idx){
+      if(idx>=fileList.length){
+        var newAssignment = {id:assignmentId, kind:'upload', title:title, description:description, files:uploadedFiles,
+          target:target, code:randomCode(6), openAt:openAt, closeAt:closeAt, createdAt:Date.now(), source:'cloud'};
+        db.assignments.push(newAssignment);
+        DB.save();
+        CloudDB.saveAssignmentCloud(newAssignment, function(ok, err){
+          if(submitBtn){ submitBtn.disabled=false; submitBtn.textContent='Giao bài ngay'; }
+          if(!ok) self.showToast('⚠️ Đã lưu lượt giao bài trên máy nhưng KHÔNG đồng bộ được lên Cloud: '+err, 'error');
+          else self.showToast('🎉 Đã giao bài "'+title+'" thành công!', 'success');
+          self.render();
+        });
+        return;
+      }
+      var file = fileList[idx];
+      if(progressHint) progressHint.textContent = 'Đang tải file '+(idx+1)+'/'+fileList.length+': '+file.name+'…';
+      withTimeout(CloudDB.uploadAssignmentFile(file, assignmentId, function(pct){
+        if(progressHint) progressHint.textContent = 'Đang tải file '+(idx+1)+'/'+fileList.length+' ('+pct+'%): '+file.name;
+      }), 30000, 'Tải file lên Cloud quá 30 giây không phản hồi — có thể do Firebase Storage chưa được bật/cấp quyền cho đường dẫn assignmentFiles/**.')
+      .then(function(uploaded){ uploadedFiles.push(uploaded); uploadNext(idx+1); })
+      .catch(function(err){
+        if(submitBtn){ submitBtn.disabled=false; submitBtn.textContent='Giao bài ngay'; }
+        if(progressHint) progressHint.textContent = '';
+        alert('Không tải lên được file "'+file.name+'": '+(err&&err.message?err.message:err)+'\n\nChưa có gì được lưu — bạn có thể thử lại.');
+      });
+    };
+    uploadNext(0);
     return false;
   },
   deleteAssignment:function(assignmentId){
@@ -53674,7 +53821,38 @@ var App = {
       '</div>';
     }
 
+    /* Bai tap dang file tai len (them moi) duoc chua chung trong db.assignments (kind:'upload'),
+       tach rieng ra day de hien thi bang mot khoi khac — KHONG dua vao vong lap ben duoi vi khoi
+       do gia dinh luon co test (getSubQuestions, computeAutoGrade...) se loi neu khong co testId. */
+    var uploadAssignments = assignments.filter(function(a){ return a.kind==='upload'; });
+    var uploadSectionsHtml = uploadAssignments.map(function(a){
+      var targetStudents;
+      if(a.target.type==='class'){
+        targetStudents = db.students.filter(function(s){return s.classId===a.target.classId;});
+      } else {
+        targetStudents = db.students.filter(function(s){return (a.target.studentIds||[]).indexOf(s.id)>=0;});
+      }
+      var rows = targetStudents.map(function(stu){
+        var sub = db.submissions.find(function(s){return s.assignmentId===a.id && s.studentId===stu.id;});
+        var statusBadge, actionBtn;
+        if(!sub){ statusBadge='<span class="badge badge-gray">Chưa nộp</span>'; actionBtn=''; }
+        else if(sub.status==='graded'){
+          statusBadge='<span class="badge badge-green">Đã chấm</span>'+(sub.isLate?' <span class="badge badge-yellow">Nộp trễ</span>':'');
+          actionBtn='<button class="btn btn-sm btn-outline" onclick="App.goto(\'teacherGradeUpload\',{submissionId:\''+sub.id+'\'})">Xem chi tiết</button>';
+        } else {
+          statusBadge='<span class="badge badge-yellow">Đã nộp — chờ chấm</span>'+(sub.isLate?' <span class="badge badge-yellow">Nộp trễ</span>':'');
+          actionBtn='<button class="btn btn-sm btn-primary" onclick="App.goto(\'teacherGradeUpload\',{submissionId:\''+sub.id+'\'})">Xem &amp; chấm</button>';
+        }
+        return '<tr><td>'+esc(stu.name)+'</td><td>'+statusBadge+'</td><td>'+(sub&&sub.submitTime?fmtDateTime(sub.submitTime):'—')+'</td><td>'+actionBtn+'</td></tr>';
+      }).join('');
+      return '<div class="card">'+
+        '<div class="topbar" style="margin-bottom:10px"><div><h3>'+esc(a.title||'Bài tập file')+' <span class="badge badge-blue">📎</span></h3><div class="sub">Hạn nộp: '+fmtDateTime(a.closeAt)+' · '+targetStudents.length+' học sinh được giao</div></div></div>'+
+        '<div class="table-wrap"><table><thead><tr><th>Học sinh</th><th>Trạng thái</th><th>Thời điểm nộp</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+      '</div>';
+    }).join('');
+
     var sections = assignments.map(function(a){
+      if(a.kind==='upload') return ''; /* da hien thi rieng o uploadSectionsHtml */
       var test = db.tests.find(function(t){return t.id===a.testId;});
       if(!test) return '';
       var targetStudents;
@@ -53728,13 +53906,65 @@ var App = {
     return ''+
       '<div class="topbar"><div><h2>Chấm bài &amp; Kết quả</h2><div class="sub">Theo dõi tiến độ làm bài và chấm điểm tự luận.</div></div></div>'+
       practiceQueueHtml+
-      (sections || '<div class="card"><div class="empty-state">Chưa có lượt giao bài chính thức nào.</div></div>');
+      uploadSectionsHtml+
+      (sections || (uploadAssignments.length ? '' : '<div class="card"><div class="empty-state">Chưa có lượt giao bài chính thức nào.</div></div>'));
+  },
+
+  /* Cham bai cho bai tap dang file tai len (them moi — tach rieng khoi renderGradeDetail/
+     finalizeGrade vi hai ham do gia dinh luon co "test" vooi cau hoi, se loi neu dung chung). */
+  gradeUploadTemp:{},
+  renderGradeUpload:function(){
+    var db = DB.get();
+    var sub = db.submissions.find(function(s){return s.id===this.state.params.submissionId;});
+    if(!sub) return '<div class="card">Không tìm thấy bài nộp.</div>';
+    var a = db.assignments.find(function(x){return x.id===sub.assignmentId;});
+    var stu = db.students.find(function(s){return s.id===sub.studentId;});
+    if(this.gradeUploadTemp[sub.id]===undefined){
+      this.gradeUploadTemp[sub.id] = {score: sub.finalScore!==undefined&&sub.finalScore!==null?sub.finalScore:'', feedback: sub.feedback||''};
+    }
+    var temp = this.gradeUploadTemp[sub.id];
+    var filesHtml = (sub.files||[]).map(function(fl){
+      var isImg = /^image\//.test(fl.type||'') || /\.(png|jpe?g|gif|webp|heic)$/i.test(fl.name||'');
+      return '<div style="margin-bottom:10px">'+
+        '<a href="'+esc(fl.url)+'" target="_blank" rel="noopener">📎 '+esc(fl.name)+'</a>'+
+        (isImg ? '<div style="margin-top:6px"><img src="'+esc(fl.url)+'" style="max-width:320px;max-height:320px;border-radius:8px;border:1px solid var(--border)"></div>' : '')+
+      '</div>';
+    }).join('') || '<div class="hint">Không có file.</div>';
+    return ''+
+      '<div class="topbar"><div><h2>Chấm bài: '+esc(stu?stu.name:'')+'</h2><div class="sub">'+esc(a?a.title:'')+' · Nộp lúc '+fmtDateTime(sub.submitTime)+(sub.isLate?' · <span class="badge badge-yellow">Nộp trễ</span>':'')+'</div></div>'+
+      '<button class="btn btn-outline" onclick="App.goto(\'teacherResults\')">← Quay lại kết quả</button></div>'+
+      '<div class="card"><h3>File học sinh đã nộp</h3>'+filesHtml+(sub.note?'<div class="hint" style="margin-top:8px">Ghi chú của học sinh: '+esc(sub.note)+'</div>':'')+'</div>'+
+      '<div class="card"><h3>Chấm điểm</h3>'+
+        '<label>Điểm (không bắt buộc, để trống nếu chỉ nhận xét)</label>'+
+        '<input type="text" value="'+esc(String(temp.score))+'" oninput="App.gradeUploadTemp[\''+sub.id+'\'].score=this.value" style="max-width:160px">'+
+        '<label>Nhận xét cho học sinh</label>'+
+        '<textarea rows="4" oninput="App.gradeUploadTemp[\''+sub.id+'\'].feedback=this.value">'+esc(temp.feedback)+'</textarea>'+
+        '<div class="modal-actions" style="justify-content:flex-start;margin-top:16px">'+
+          '<button class="btn btn-primary" onclick="App.finalizeGradeUpload(\''+sub.id+'\')">💾 Lưu điểm &amp; hoàn tất chấm bài</button>'+
+        '</div>'+
+      '</div>';
+  },
+  finalizeGradeUpload:function(submissionId){
+    var db = DB.get();
+    var sub = db.submissions.find(function(s){return s.id===submissionId;});
+    if(!sub) return;
+    var temp = this.gradeUploadTemp[submissionId] || {};
+    sub.finalScore = (temp.score!==undefined && String(temp.score).trim()!=='') ? temp.score : null;
+    sub.feedback = temp.feedback || '';
+    sub.status = 'graded';
+    sub.gradedAt = Date.now();
+    DB.save();
+    this.syncSubmissionToCloud(sub, {showErrorToast:true});
+    delete this.gradeUploadTemp[submissionId];
+    this.showToast('✅ Đã lưu chấm bài.', 'success');
+    this.goto('teacherResults');
   },
 
   renderGradeDetail:function(){
     var db = DB.get();
     var sub = db.submissions.find(function(s){return s.id===this.state.params.submissionId;}.bind(this));
     if(!sub) return '<div class="card">Không tìm thấy bài nộp.</div>';
+    if(sub.kind==='upload'){ return this.renderGradeUpload(); }
     var test = db.tests.find(function(t){return t.id===sub.testId;});
     var stu = db.students.find(function(s){return s.id===sub.studentId;});
     var key = 'grade_'+sub.id;
@@ -53875,6 +54105,20 @@ var App = {
       if(a.target.type==='class') return a.target.classId===student.classId;
       return (a.target.studentIds||[]).indexOf(student.id)>=0;
     });
+  },
+  /* Nhac nho don gian, khong can them backend/email (them moi): dem so bai (ca loai de thi va
+     loai file tai len) dang mo, chua nop, de hien thanh badge tren muc "Bai kiem tra duoc giao".
+     Day la BUOC 1 (trong app) trong lo trinh nhac nho — email/push se can Cloud Function rieng,
+     xem tai lieu ban giao. */
+  getPendingAssignmentCount:function(student){
+    var db = DB.get();
+    var now = Date.now();
+    return this.getVisibleAssignments(student).filter(function(a){
+      if(now<a.openAt || now>a.closeAt) return false;
+      var sub = db.submissions.find(function(s){return s.assignmentId===a.id && s.studentId===student.id;});
+      if(a.kind==='upload') return !sub;
+      return !sub || sub.status==='in-progress';
+    }).length;
   },
 
   getPracticeCategories:function(){
@@ -54566,10 +54810,31 @@ var App = {
     var list = this.getVisibleAssignments(student);
     var now = Date.now();
     var rows = list.map(function(a){
-      var test = db.tests.find(function(t){return t.id===a.testId;});
+      var isUpload = a.kind==='upload';
+      var test = isUpload ? null : db.tests.find(function(t){return t.id===a.testId;});
       var sub = db.submissions.find(function(s){return s.assignmentId===a.id && s.studentId===student.id;});
       var status, actionHtml;
-      if(now<a.openAt){ status='<span class="badge badge-gray">Chưa mở</span>'; actionHtml=''; }
+      if(isUpload){
+        /* Bai tap dang file tai len: khong co trang thai "dang lam do" (khong lam bai tung cau
+           trong he thong) — hoc sinh chi tai file len nop, co the nop lai truoc han. */
+        if(now<a.openAt){ status='<span class="badge badge-gray">Chưa mở</span>'; actionHtml=''; }
+        else if(sub){
+          if(sub.status==='graded'){
+            status='<span class="badge badge-green">Đã chấm</span>'+(sub.isLate?' <span class="badge badge-yellow">Nộp trễ</span>':'');
+            actionHtml = '<button class="btn btn-sm btn-outline" onclick="App.goto(\'studentUploadResult\',{submissionId:\''+sub.id+'\'})">Xem kết quả</button>';
+          } else {
+            status='<span class="badge badge-blue">Đã nộp — chờ chấm</span>'+(sub.isLate?' <span class="badge badge-yellow">Nộp trễ</span>':'');
+            actionHtml = now<=a.closeAt
+              ? '<button class="btn btn-sm btn-outline" onclick="App.openSubmitUploadModal(\''+a.id+'\')">Nộp lại</button>'
+              : '<button class="btn btn-sm btn-outline" onclick="App.goto(\'studentUploadResult\',{submissionId:\''+sub.id+'\'})">Xem bài đã nộp</button>';
+          }
+        } else if(now>a.closeAt){
+          status='<span class="badge badge-gray">Đã đóng</span>'; actionHtml='<i>Không nộp bài</i>';
+        } else {
+          status='<span class="badge badge-blue">Có thể nộp bài</span>';
+          actionHtml = '<button class="btn btn-sm btn-primary" onclick="App.openSubmitUploadModal(\''+a.id+'\')">📎 Nộp bài</button>';
+        }
+      } else if(now<a.openAt){ status='<span class="badge badge-gray">Chưa mở</span>'; actionHtml=''; }
       else if(now>a.closeAt){
         status='<span class="badge badge-gray">Đã đóng</span>';
         actionHtml = sub ? '<button class="btn btn-sm btn-outline" onclick="App.goto(\'studentResultDetail\',{submissionId:\''+sub.id+'\'})">Xem lại</button>' : '<i>Không nộp bài</i>';
@@ -54583,8 +54848,11 @@ var App = {
         status='<span class="badge badge-blue">Có thể làm bài</span>';
         actionHtml = '<button class="btn btn-sm btn-primary" onclick="App.enterExam(\''+a.id+'\')">Vào làm bài</button>';
       }
+      var titleCell = isUpload
+        ? '<b>'+esc(a.title||'Bài tập file')+'</b> <span class="badge badge-blue">📎</span>'+(a.description?'<div class="hint">'+esc(a.description)+'</div>':'')
+        : '<b>'+esc(test?test.title:'')+'</b><div class="hint">'+(test?categoryBadge(test.subject):'')+' · '+(test?test.duration:'')+' phút</div>';
       return '<tr>'+
-        '<td><b>'+esc(test?test.title:'')+'</b><div class="hint">'+(test?categoryBadge(test.subject):'')+' · '+(test?test.duration:'')+' phút</div></td>'+
+        '<td>'+titleCell+'</td>'+
         '<td>'+fmtDateTime(a.openAt)+' → '+fmtDateTime(a.closeAt)+'</td>'+
         '<td>'+status+'</td>'+
         '<td>'+actionHtml+'</td>'+
@@ -54612,6 +54880,110 @@ var App = {
       this.syncSubmissionToCloud(sub);
     }
     this.goto('studentExam', {submissionId:sub.id});
+  },
+
+  /* Nop bai cho bai tap dang file tai len (them moi — khong dung chung ham voi enterExam/
+     studentExam de khong dong cham gi den luong lam bai trac nghiem hien co). */
+  openSubmitUploadModal:function(assignmentId){
+    var db = DB.get();
+    var a = db.assignments.find(function(x){return x.id===assignmentId;});
+    if(!a){ return; }
+    var student = this.state.user;
+    var existing = db.submissions.find(function(s){return s.assignmentId===assignmentId && s.studentId===student.id;});
+    var html = ''+
+      '<h3>Nộp bài: '+esc(a.title||'')+'</h3>'+
+      (a.description ? '<div class="hint" style="margin-bottom:10px">'+esc(a.description)+'</div>' : '')+
+      (existing ? '<div class="hint" style="margin-bottom:10px">Bạn đã nộp bài này lúc '+fmtDateTime(existing.submitTime)+'. Nộp lại sẽ THAY THẾ bài cũ.</div>' : '')+
+      '<form onsubmit="return App.submitUploadAnswer(event,\''+assignmentId+'\')">'+
+        '<label>File bài làm (ảnh chụp hoặc file Word — có thể chọn nhiều file)</label>'+
+        '<input type="file" name="files" multiple accept="image/*,.pdf,.doc,.docx" required>'+
+        '<label>Ghi chú (không bắt buộc)</label>'+
+        '<textarea name="note" rows="2" placeholder="Ghi chú thêm cho giáo viên…"></textarea>'+
+        '<div class="hint" id="submitUploadProgressHint" style="margin-top:4px"></div>'+
+        '<div class="modal-actions">'+
+          '<button type="button" class="btn" onclick="App.closeModal()">Hủy</button>'+
+          '<button type="submit" class="btn btn-primary" id="submitUploadBtn">Nộp bài</button>'+
+        '</div>'+
+      '</form>';
+    this.openModal(html);
+  },
+  submitUploadAnswer:function(e, assignmentId){
+    e.preventDefault();
+    var f = e.target;
+    var db = DB.get();
+    var self = this;
+    var student = this.state.user;
+    var a = db.assignments.find(function(x){return x.id===assignmentId;});
+    if(!a){ alert('Không tìm thấy bài tập này.'); return false; }
+    var fileList = f.files && f.files.files ? Array.prototype.slice.call(f.files.files) : [];
+    if(fileList.length===0){ alert('Vui lòng chọn ít nhất 1 file bài làm.'); return false; }
+    var MAX_FILE_MB = 15, MAX_FILES = 5;
+    if(fileList.length>MAX_FILES){ alert('Chỉ được chọn tối đa '+MAX_FILES+' file.'); return false; }
+    for(var i=0;i<fileList.length;i++){
+      if(fileList[i].size > MAX_FILE_MB*1024*1024){ alert('File "'+fileList[i].name+'" vượt quá '+MAX_FILE_MB+'MB.'); return false; }
+    }
+    if(!(isCloudConfigured() && CloudDB.ready)){
+      alert('Cần kết nối Cloud để nộp bài (file cần được lưu để giáo viên xem được).');
+      return false;
+    }
+    var note = (f.note.value||'').trim();
+    var submitBtn = document.getElementById('submitUploadBtn');
+    var progressHint = document.getElementById('submitUploadProgressHint');
+    if(submitBtn){ submitBtn.disabled = true; submitBtn.textContent = 'Đang tải file lên…'; }
+    var existing = db.submissions.find(function(s){return s.assignmentId===assignmentId && s.studentId===student.id;});
+    var submissionId = existing ? existing.id : uid('sub');
+    var uploadedFiles = [];
+    var uploadNext = function(idx){
+      if(idx>=fileList.length){
+        var now = Date.now();
+        var sub = existing || {id:submissionId, assignmentId:assignmentId, studentId:student.id, kind:'upload'};
+        sub.kind = 'upload';
+        sub.files = uploadedFiles;
+        sub.note = note;
+        sub.submitTime = now;
+        sub.isLate = now>a.closeAt;
+        sub.status = 'awaiting-manual';
+        if(!existing) db.submissions.push(sub);
+        DB.save();
+        self.syncSubmissionToCloud(sub, {showErrorToast:true});
+        self.closeModal();
+        self.showToast('✅ Đã nộp bài "'+(a.title||'')+'"!', 'success');
+        self.render();
+        return;
+      }
+      var file = fileList[idx];
+      if(progressHint) progressHint.textContent = 'Đang tải file '+(idx+1)+'/'+fileList.length+': '+file.name+'…';
+      withTimeout(CloudDB.uploadSubmissionFile(file, submissionId, function(pct){
+        if(progressHint) progressHint.textContent = 'Đang tải file '+(idx+1)+'/'+fileList.length+' ('+pct+'%): '+file.name;
+      }), 30000, 'Tải file lên Cloud quá 30 giây không phản hồi — có thể do Firebase Storage chưa được cấp quyền cho đường dẫn submissionFiles/**.')
+      .then(function(uploaded){ uploadedFiles.push(uploaded); uploadNext(idx+1); })
+      .catch(function(err){
+        if(submitBtn){ submitBtn.disabled=false; submitBtn.textContent='Nộp bài'; }
+        if(progressHint) progressHint.textContent = '';
+        alert('Không tải lên được file "'+file.name+'": '+(err&&err.message?err.message:err)+'\n\nChưa có gì được lưu — bạn có thể thử lại.');
+      });
+    };
+    uploadNext(0);
+    return false;
+  },
+  renderStudentUploadResult:function(){
+    var db = DB.get();
+    var sub = db.submissions.find(function(s){return s.id===this.state.params.submissionId;}.bind(this));
+    if(!sub) return '<div class="card">Không tìm thấy bài nộp.</div>';
+    var a = db.assignments.find(function(x){return x.id===sub.assignmentId;});
+    var filesHtml = (sub.files||[]).map(function(fl){
+      return '<div style="margin-bottom:6px"><a href="'+esc(fl.url)+'" target="_blank" rel="noopener">📎 '+esc(fl.name)+'</a></div>';
+    }).join('') || '<div class="hint">Không có file.</div>';
+    return ''+
+      '<div class="topbar"><div><h2>'+esc(a?a.title:'Bài tập')+'</h2><div class="sub">Nộp lúc '+fmtDateTime(sub.submitTime)+(sub.isLate?' · <span class="badge badge-yellow">Nộp trễ</span>':'')+'</div></div>'+
+      '<button class="btn btn-outline" onclick="App.goto(\'studentAssignments\')">← Quay lại</button></div>'+
+      '<div class="card"><h3>File đã nộp</h3>'+filesHtml+(sub.note?'<div class="hint" style="margin-top:8px">Ghi chú của bạn: '+esc(sub.note)+'</div>':'')+'</div>'+
+      (sub.status==='graded'
+        ? '<div class="card"><h3>Kết quả</h3>'+
+          (sub.finalScore!==undefined && sub.finalScore!==null && sub.finalScore!=='' ? '<div class="stat-card" style="max-width:200px"><div class="num">'+esc(String(sub.finalScore))+'</div><div class="label">Điểm</div></div>' : '')+
+          (sub.feedback ? '<div class="hint" style="margin-top:8px"><b>Nhận xét của giáo viên:</b><br>'+nl2br(sub.feedback)+'</div>' : '<div class="hint">Giáo viên chưa để lại nhận xét.</div>')+
+          '</div>'
+        : '<div class="card"><div class="empty-state">Giáo viên chưa chấm bài này.</div></div>');
   },
 
   examTimerInterval:null,
@@ -55042,7 +55414,10 @@ var App = {
   /* ================= HỒ SƠ HỌC TẬP CÁ NHÂN ================= */
   getStudentStats:function(studentId){
     var db = DB.get();
-    var subs = db.submissions.filter(function(s){return s.studentId===studentId && s.status!=='in-progress';});
+    /* Loai bai nop dang 'upload' (bai tap file tai len, them moi) khoi thong ke nay: cac bai do
+       khong co maxScore/startTime theo cau truc cu, tinh chung se ra NaN cho totalMinutes. Bai
+       nop loai file co trang xem ket qua rieng (studentUploadResult). */
+    var subs = db.submissions.filter(function(s){return s.studentId===studentId && s.status!=='in-progress' && s.kind!=='upload';});
     subs = subs.slice().sort(function(a,b){return (a.submitTime||0)-(b.submitTime||0);});
     var gradedSubs = subs.filter(function(s){return s.status==='graded' && s.maxScore>0;});
     var avgPct = gradedSubs.length ? gradedSubs.reduce(function(sum,s){return sum+(s.finalScore/s.maxScore);},0)/gradedSubs.length : null;
@@ -55154,7 +55529,10 @@ var App = {
   renderStudentResults:function(){
     var db = DB.get();
     var student = this.state.user;
-    var subs = db.submissions.filter(function(s){return s.studentId===student.id && s.status!=='in-progress';});
+    /* Bai nop dang 'upload' (them moi) co trang xem rieng (studentUploadResult, xem trong muc
+       "Bai kiem tra duoc giao") nen khong liet ke lai o day de tranh hien thi "undefined" cho
+       maxScore (cau truc bai file khac voi bai trac nghiem). */
+    var subs = db.submissions.filter(function(s){return s.studentId===student.id && s.status!=='in-progress' && s.kind!=='upload';});
     subs = subs.slice().sort(function(a,b){return (b.submitTime||0)-(a.submitTime||0);});
     var rows = subs.map(function(sub){
       var test = db.tests.find(function(t){return t.id===sub.testId;});
@@ -55337,16 +55715,19 @@ var App = {
         case 'teacherAssign': content=this.renderAssign(); break;
         case 'teacherResults': content=this.renderResults(); break;
         case 'teacherGradeDetail': content=this.renderGradeDetail(); activeView='teacherResults'; break;
+        case 'teacherGradeUpload': content=this.renderGradeUpload(); activeView='teacherResults'; break;
         case 'teacherSpeaking': content=this.renderSpeakingScript(); activeView='teacherTests'; break;
         default: content=this.renderTeacherDashboard();
       }
     } else {
       var isExternalStudent = !!(this.state.user && this.state.user.selfRegistered);
+      var pendingCount = isExternalStudent ? 0 : this.getPendingAssignmentCount(this.state.user);
+      var assignmentsNavLabel = 'Bài kiểm tra được giao'+(pendingCount>0 ? ' <span class="badge badge-red" style="margin-left:4px">'+pendingCount+'</span>' : '');
       navItems = isExternalStudent
         ? [ ['studentPractice','🎯','Kho đề luyện tập'], ['studentProfile','🌟','Hồ sơ học tập'] ]
         : [
             ['studentPractice','🎯','Luyện thi thử'],
-            ['studentAssignments','📋','Bài kiểm tra được giao'],
+            ['studentAssignments','📋',assignmentsNavLabel],
             ['studentResults','📊','Kết quả của tôi'],
             ['studentProfile','🌟','Hồ sơ học tập']
           ];
@@ -55357,6 +55738,7 @@ var App = {
         case 'studentExam': content=this.renderStudentExam(); break;
         case 'studentResults': content=this.renderStudentResults(); break;
         case 'studentResultDetail': content=this.renderStudentResultDetail(); activeView='studentResults'; break;
+        case 'studentUploadResult': content=this.renderStudentUploadResult(); activeView='studentAssignments'; break;
         case 'studentProfile': content=this.renderStudentProfile(); break;
         default: content=this.renderStudentPractice();
       }
