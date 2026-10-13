@@ -51458,7 +51458,7 @@ if(self._suppressAuthRoute) return;
      môn/chứng chỉ ngay lập tức — không gắn lớp, không cần giáo viên giao bài. Giáo viên vẫn
      có thể nhìn thấy các tài khoản này (nhóm "🌐 Tự đăng ký") ở màn hình Lớp học & Học sinh,
      và vẫn có thể giao bài chính thức cho các em sau này nếu muốn. */
-  openSelfSignup:function(){
+  openSelfSignup:function(){this.showToast('🔒 Đăng ký tự do đã đóng. Tài khoản do giáo viên cấp — vui lòng liên hệ giáo viên của bạn.','error'); return;
     var html = ''+
       '<h3>🎓 Đăng ký tài khoản luyện thi thử</h3>'+
       '<div class="hint" style="margin-bottom:12px">Không cần giáo viên cấp tài khoản — đăng ký xong là vào luyện tập ngay với kho đề theo từng môn/chứng chỉ.</div>'+
@@ -51476,7 +51476,7 @@ if(self._suppressAuthRoute) return;
       '</form>';
     this.openModal(html);
   },
-  submitSelfSignup:function(e){
+  submitSelfSignup:function(e){if(e&&e.preventDefault)e.preventDefault(); this.showToast('🔒 Đăng ký tự do đã đóng. Tài khoản do giáo viên cấp — vui lòng liên hệ giáo viên của bạn.','error'); return false;
     e.preventDefault();
     var f = e.target;
     var name = f.name.value.trim();
@@ -55472,7 +55472,7 @@ if(self._suppressAuthRoute) return;
             '<button type="submit" class="btn btn-primary btn-block btn-pill" style="margin-top:18px" '+(s.loginPending?'disabled':'')+'>'+(s.loginPending?'Đang đăng nhập...':'Đăng nhập')+'</button>'+
           '</form>'+
           (s.loginRole==='student'
-            ? '<div class="signup-cta">🎓 <b>Học sinh mới?</b> Không cần giáo viên cấp tài khoản — <a onclick="App.openSelfSignup()">đăng ký ngay để luyện thi thử miễn phí</a> theo từng môn/chứng chỉ.</div>'
+            ? '<div class="signup-cta">🔒 <b>Tài khoản do giáo viên cấp.</b> Chưa có tài khoản? Hãy liên hệ giáo viên của bạn để được cấp.</div>'
             : '')+
         '</div>'+
       '</div>';
