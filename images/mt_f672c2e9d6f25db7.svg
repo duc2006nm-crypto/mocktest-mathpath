@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="280" viewBox="0 0 240 280">
+<rect x="10" y="6" width="220" height="268" rx="26" fill="#1f2937"/>
+<rect x="20" y="18" width="200" height="242" rx="10" fill="#f8fafc"/>
+<rect x="20" y="18" width="200" height="36" rx="10" fill="#2563eb"/>
+<text x="34" y="41" font-size="16" fill="#fff" font-family="Arial" font-weight="bold">Lynne</text>
+<text x="26" y="80" font-size="14.5" fill="#111827" font-family="Arial">Kim's party starts at</text><text x="26" y="100" font-size="14.5" fill="#111827" font-family="Arial">8 p.m. but of course</text><text x="26" y="120" font-size="14.5" fill="#111827" font-family="Arial">you don't finish work</text><text x="26" y="140" font-size="14.5" fill="#111827" font-family="Arial">until 9. Shall we go</text><text x="26" y="160" font-size="14.5" fill="#111827" font-family="Arial">together at 9.30?</text><text x="26" y="180" font-size="14.5" fill="#111827" font-family="Arial">I'll pick you up.</text><text x="26" y="200" font-size="14.5" fill="#111827" font-family="Arial">Emma</text>
+<circle cx="120" cy="268" r="9" fill="#4b5563"/>
+</svg>
