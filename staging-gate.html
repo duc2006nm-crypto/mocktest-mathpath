@@ -48724,6 +48724,7 @@ var CloudDB = {
     if(!this.ready){ cb([]); return; }
     this.db.collection('tests').get().then(function(snap){
       var arr = [];
+      CloudDB._testsOk = true;
       snap.forEach(function(doc){
         var data = desanitizeArraysFromFirestore(doc.data());
         data.id = doc.id;
@@ -48731,23 +48732,99 @@ var CloudDB = {
         arr.push(data);
       });
       cb(arr);
-    }).catch(function(e){ console.error('CloudDB.fetchTests loi:', e); cb([]); });
+    }).catch(function(e){ CloudDB._testsOk = false; console.error('CloudDB.fetchTests loi:', e); cb([]); });
   },
   /* Luu (tao moi hoac cap nhat) 1 de thi len Cloud — CHI khi da dang nhap Admin.
      Dung chinh test.id lam ID tren Firestore de dam bao dong bo 1-1, khong bi trung lap. */
+  catalogDoc:function(test){
+    var c = JSON.parse(JSON.stringify(test));
+    delete c.source; delete c.questions; delete c.audio; delete c.speaking; delete c._stub; delete c.qMeta;
+    var qs = test.questions || [];
+    c.qMeta = qs.map(function(q){ return {id:q.id, type:q.type||null, points:(q.points==null?1:q.points), skill:q.skill||null, part:(q.part==null?null:q.part)}; });
+    c.qCount = qs.length;
+    c.totalPoints = qs.reduce(function(sum,q){ return sum+(q.points||1); }, 0);
+    c.hasAudio = !!(test.audio && test.audio.file);
+    c.hasSpeaking = !!test.speaking;
+    c.catalogVersion = 1; c.updatedAt = Date.now();
+    return sanitizeArraysForFirestore(c);
+  },
+  /* DANH MUC DE (testCatalog): ban nhe cua tung de (khong co cau hoi) de hoc sinh tai nhanh. */
+  fetchCatalog:function(cb){
+    if(!this.ready){ cb(false, []); return; }
+    this.db.collection('testCatalog').get().then(function(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var d = desanitizeArraysFromFirestore(doc.data());
+        d.id = doc.id; d.source = 'cloud'; d._stub = true;
+        d.questions = (d.qMeta||[]).map(function(m){
+          var o = {id:m.id, points:m.points, _stub:true};
+          if(m.type) o.type = m.type; if(m.skill) o.skill = m.skill; if(m.part!=null) o.part = m.part;
+          return o;
+        });
+        arr.push(d);
+      });
+      cb(true, arr);
+    }).catch(function(e){ console.error('CloudDB.fetchCatalog loi:', e); cb(false, []); });
+  },
+  /* Tai NOI DUNG DAY DU cua 1 de (chi khi hoc sinh mo de de lam bai / xem ket qua chi tiet). */
+  fetchTestFull:function(testId, cb){
+    if(!this.ready){ cb(false, 'Cloud chưa sẵn sàng.'); return; }
+    this.db.collection('tests').doc(testId).get().then(function(doc){
+      if(!doc.exists){ cb(false, 'Đề không còn tồn tại.'); return; }
+      var d = desanitizeArraysFromFirestore(doc.data()); d.id = doc.id; d.source = 'cloud';
+      cb(true, d);
+    }).catch(function(e){ cb(false, (e && e.code==='permission-denied') ? 'Bạn chưa mở khóa đề này.' : (e && e.message)); });
+  },
+  /* Tu dong doi chieu danh muc voi kho de (chi Giao vien/Admin): bo sung dong thieu/lech, don dong mo coi. */
+  syncCatalog:function(tests, cb){
+    var self = this;
+    if(!this.ready || !this.currentAdmin || !this._testsOk || !tests.length){ cb(false); return; }
+    this.db.collection('testCatalog').get().then(function(snap){
+      var have = {}, haveN = 0; snap.forEach(function(d){ have[d.id] = d.data(); haveN++; });
+      var upserts = [], ids = {};
+      tests.forEach(function(t){
+        ids[t.id] = 1; var c = have[t.id];
+        var stale = !c || c.qCount !== (t.questions||[]).length || c.title !== t.title || c.subject !== t.subject ||
+          !!c.isPremium !== !!t.isPremium || (c.creditCost||0) !== (t.creditCost||0) || c.duration !== t.duration;
+        if(stale) upserts.push(t);
+      });
+      var orphans = Object.keys(have).filter(function(id){ return !ids[id]; });
+      if(orphans.length > Math.max(3, haveN*0.2)){ console.warn('syncCatalog: qua nhieu dong mo coi, bo qua xoa'); orphans = []; }
+      if(!upserts.length && !orphans.length){ cb(true, 0, 0); return; }
+      var ops = upserts.map(function(t){ return {t:t}; }).concat(orphans.map(function(id){ return {del:id}; }));
+      var chunks = []; for(var i=0;i<ops.length;i+=40) chunks.push(ops.slice(i,i+40));
+      var idx = 0;
+      (function next(){
+        if(idx>=chunks.length){ cb(true, upserts.length, orphans.length); return; }
+        var b = self.db.batch();
+        chunks[idx].forEach(function(op){
+          if(op.t) b.set(self.db.collection('testCatalog').doc(op.t.id), self.catalogDoc(op.t));
+          else b.delete(self.db.collection('testCatalog').doc(op.del));
+        });
+        b.commit().then(function(){ idx++; next(); }).catch(function(e){ console.error('syncCatalog', e); cb(false); });
+      })();
+    }).catch(function(e){ console.error('syncCatalog', e); cb(false); });
+  },
   saveTest:function(test, cb){
     if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
     if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    if(test._stub){ cb(false, 'Đề chưa tải đủ nội dung, không thể lưu.'); return; }
     var data = JSON.parse(JSON.stringify(test));
     delete data.source;
     data = sanitizeArraysForFirestore(data);
-    this.db.collection('tests').doc(test.id).set(data).then(function(){ cb(true, test.id); }).catch(function(e){ cb(false, e && e.message); });
+    var b = this.db.batch();
+    b.set(this.db.collection('tests').doc(test.id), data);
+    b.set(this.db.collection('testCatalog').doc(test.id), this.catalogDoc(test));
+    b.commit().then(function(){ cb(true, test.id); }).catch(function(e){ cb(false, e && e.message); });
   },
   /* Xoa 1 de thi tren Cloud — CHI khi da dang nhap Admin. */
   deleteTest:function(testId, cb){
     if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
     if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
-    this.db.collection('tests').doc(testId).delete().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+    var b = this.db.batch();
+    b.delete(this.db.collection('tests').doc(testId));
+    b.delete(this.db.collection('testCatalog').doc(testId));
+    b.commit().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
   },
   loginAdmin:function(email, pass, cb){
     if(!this.ready){ cb(false,'Cloud chưa được cấu hình — xem hướng dẫn thiết lập trước.'); return; }
@@ -51198,6 +51275,49 @@ var App = {
   /* Ket noi Cloud (neu da cau hinh FIREBASE_CONFIG) va tai ve de thi moi nhat. Neu chua cau hinh,
      hoac dang offline, app van chay binh thuong voi du lieu tren may — khong co loi hien thi cho
      hoc sinh. */
+  _fetchTestsForRole:function(cb){
+    var u = CloudDB.auth && CloudDB.auth.currentUser;
+    var isStudent = !!(u && String(u.email||'').indexOf('@'+STUDENT_AUTH_DOMAIN) >= 0);
+    var self = this;
+    if(!isStudent){
+      CloudDB.fetchTests(function(tests){
+        cb(tests);
+        try{
+          CloudDB.syncCatalog((tests||[]).filter(function(t){ return t.source==='cloud'; }), function(ok, up, del){
+            if(ok && (up||del)) self.showToast('🔄 Đã đồng bộ danh mục đề ('+up+' cập nhật, '+del+' xóa).', 'info');
+          });
+        }catch(err){ if(window.console) console.error(err); }
+      });
+      return;
+    }
+    CloudDB.fetchCatalog(function(ok, arr){
+      if(ok && arr.length){ cb(arr); return; }
+      CloudDB.fetchTests(cb);
+    });
+  },
+  hydrateThenRender:function(testId){
+    var self = this;
+    if(!this._hydrating) this._hydrating = {};
+    var st = this._hydrating[testId];
+    if(!st){
+      this._hydrating[testId] = 'loading'; st = 'loading';
+      CloudDB.fetchTestFull(testId, function(ok, full){
+        if(ok){
+          var d = DB.get(); var i = d.tests.findIndex(function(x){ return x.id===testId; });
+          if(i>=0) d.tests[i] = full; else d.tests.push(full);
+          delete self._hydrating[testId];
+        } else { self._hydrating[testId] = 'error:'+full; }
+        self.render();
+      });
+    }
+    if(String(st).indexOf('error:')===0){
+      return '<div class="card"><div class="empty-state">⚠️ Không tải được nội dung đề ('+esc(String(st).slice(6))+').</div>'+
+        '<div style="display:flex;gap:8px;justify-content:center;margin-top:10px"><button class="btn btn-primary" onclick="App.retryHydrate(\''+testId+'\')">Thử lại</button> '+
+        '<button class="btn btn-outline" onclick="App.goto(\'studentPractice\')">← Quay lại</button></div></div>';
+    }
+    return '<div class="card"><div class="empty-state">⏳ Đang tải nội dung đề...</div></div>';
+  },
+  retryHydrate:function(testId){ if(this._hydrating) delete this._hydrating[testId]; this.render(); },
   loadCloudContent:function(){
 var self = this; var pending = 2; var done = false;
 self._contentReady = false;
@@ -51207,7 +51327,7 @@ done = true; self._contentReady = true;
 var q = self._contentWaiters || []; self._contentWaiters = [];
 q.forEach(function(f){ try{ f(); }catch(err){ if(window.console) console.error(err); } });
 }
-CloudDB.fetchTests(function(cloudTests){
+self._fetchTestsForRole(function(cloudTests){
 try{ DB.mergeCloudTests(cloudTests); }catch(err){ if(window.console) console.error(err); }
 self.render(); fin();
 });
@@ -51458,7 +51578,7 @@ if(self._suppressAuthRoute) return;
      môn/chứng chỉ ngay lập tức — không gắn lớp, không cần giáo viên giao bài. Giáo viên vẫn
      có thể nhìn thấy các tài khoản này (nhóm "🌐 Tự đăng ký") ở màn hình Lớp học & Học sinh,
      và vẫn có thể giao bài chính thức cho các em sau này nếu muốn. */
-  openSelfSignup:function(){this.showToast('🔒 Đăng ký tự do đã đóng. Tài khoản do giáo viên cấp — vui lòng liên hệ giáo viên của bạn.','error'); return;
+  openSelfSignup:function(){
     var html = ''+
       '<h3>🎓 Đăng ký tài khoản luyện thi thử</h3>'+
       '<div class="hint" style="margin-bottom:12px">Không cần giáo viên cấp tài khoản — đăng ký xong là vào luyện tập ngay với kho đề theo từng môn/chứng chỉ.</div>'+
@@ -51476,7 +51596,7 @@ if(self._suppressAuthRoute) return;
       '</form>';
     this.openModal(html);
   },
-  submitSelfSignup:function(e){if(e&&e.preventDefault)e.preventDefault(); this.showToast('🔒 Đăng ký tự do đã đóng. Tài khoản do giáo viên cấp — vui lòng liên hệ giáo viên của bạn.','error'); return false;
+  submitSelfSignup:function(e){
     e.preventDefault();
     var f = e.target;
     var name = f.name.value.trim();
@@ -54642,6 +54762,7 @@ if(self._suppressAuthRoute) return;
     var sub = db.submissions.find(function(s){return s.id===wantedSubId;});
     if(!sub) return '<div class="card">Không tìm thấy bài làm.</div>';
     var test = db.tests.find(function(t){return t.id===sub.testId;});
+    if(test && test._stub) return this.hydrateThenRender(test.id);
     var a = sub.assignmentId ? db.assignments.find(function(x){return x.id===sub.assignmentId;}) : null;
     var examStudent = db.students.find(function(s){return s.id===sub.studentId;}) || this.state.user;
     var effDuration = this.getEffectiveDurationMinutes(test, sub, examStudent);
@@ -55033,6 +55154,7 @@ if(self._suppressAuthRoute) return;
     if(!sub || sub.status!=='in-progress') return;
     if(!isAuto && !confirm('Bạn chắc chắn muốn nộp bài? Sau khi nộp sẽ không thể chỉnh sửa câu trả lời.')) return;
     var test = db.tests.find(function(t){return t.id===sub.testId;});
+    if(test && test._stub){ this.showToast('Nội dung đề chưa tải xong, chưa thể nộp bài. Vui lòng thử lại.', 'error'); return; }
     if(this.examTimerInterval) clearInterval(this.examTimerInterval);
     this.stopExamGuard();
     var self = this;
@@ -55253,6 +55375,7 @@ if(self._suppressAuthRoute) return;
         '<div class="celebrate-card"><div class="emoji">🙈</div><h3>Đã nộp bài thành công!</h3>'+
         '<div class="msg">Điểm và đáp án của bài này sẽ được giáo viên công bố sau. Hãy quay lại kiểm tra nhé!</div></div>';
     }
+    if(test && test._stub) return this.hydrateThenRender(test.id);
     var qBlocks = this.getSubQuestions(test, sub).map(function(q, idx){
       var ans = sub.answers[q.id];
       var body='';
@@ -55472,7 +55595,7 @@ if(self._suppressAuthRoute) return;
             '<button type="submit" class="btn btn-primary btn-block btn-pill" style="margin-top:18px" '+(s.loginPending?'disabled':'')+'>'+(s.loginPending?'Đang đăng nhập...':'Đăng nhập')+'</button>'+
           '</form>'+
           (s.loginRole==='student'
-            ? '<div class="signup-cta">🔒 <b>Tài khoản do giáo viên cấp.</b> Chưa có tài khoản? Hãy liên hệ giáo viên của bạn để được cấp.</div>'
+            ? '<div class="signup-cta">🎓 <b>Học sinh mới?</b> Không cần giáo viên cấp tài khoản — <a onclick="App.openSelfSignup()">đăng ký ngay để luyện thi thử miễn phí</a> theo từng môn/chứng chỉ.</div>'
             : '')+
         '</div>'+
       '</div>';
