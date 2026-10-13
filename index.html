@@ -48903,7 +48903,10 @@ var CloudDB = {
       if(!doc.exists){ cb(false,'Không tìm thấy hồ sơ học sinh.'); return; }
       var data = desanitizeArraysFromFirestore(doc.data());
       data.id = studentUid;
-      cb(true, data);
+      /* Danh sach de da mo khoa (students/{uid}/unlocks) — khong luu nguoc len ho so. */
+      CloudDB.db.collection('students').doc(studentUid).collection('unlocks').get().then(function(us){
+        var m = {}; us.forEach(function(u){ m[u.id] = true; }); data.unlocked = m; cb(true, data);
+      }).catch(function(){ data.unlocked = {}; cb(true, data); });
     }).catch(function(e){ cb(false, e && e.message); });
   },
   /* CHI Admin Cloud (giao vien) moi doc duoc TOAN BO danh sach — theo Security Rules se thiet lap. */
@@ -49016,6 +49019,39 @@ var CloudDB = {
   },
   /* Tru tin dung AN TOAN bang Firestore Transaction (doc so du MOI NHAT tren Cloud roi moi quyet
      dinh, khong dung cache tren may) — tranh bam nhanh 2 lan / mo 2 tab lam tru tien 2 lan. */
+  /* Mo khoa de bang tin dung: tru tin dung VA ghi ban ghi mo khoa trong CUNG 1 giao dich (Firestore Rules kiem tra cap doi nay). */
+  spendStudentCreditForTest:function(studentUid, cost, reason, testId, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    var ref = this.db.collection('students').doc(studentUid);
+    var unlockRef = ref.collection('unlocks').doc(testId);
+    this.db.runTransaction(function(tx){
+      return tx.get(ref).then(function(doc){
+        if(!doc.exists) throw new Error('Không tìm thấy hồ sơ học sinh.');
+        var data = doc.data();
+        var balance = data.credits||0;
+        if(balance < cost){ throw new Error('INSUFFICIENT_CREDIT'); }
+        var newBalance = balance - cost;
+        var log = desanitizeArraysFromFirestore(data.creditLog||[]);
+        log.push({id: uid('cl'), delta: -cost, reason: reason, at: Date.now()});
+        tx.update(ref, {credits: newBalance, creditLog: sanitizeArraysForFirestore(log)});
+        tx.set(unlockRef, {testId: testId, type: 'credit', cost: cost, at: Date.now()});
+        return {newBalance: newBalance, newLog: log};
+      });
+    }).then(function(result){ cb(true, result); })
+    .catch(function(e){
+      if(e && e.message==='INSUFFICIENT_CREDIT'){ cb(false, 'INSUFFICIENT_CREDIT'); return; }
+      cb(false, e && e.message);
+    });
+  },
+  /* Bai thi duoc giao: ghi ban ghi mo khoa (Rules kiem tra bai giao hop le, dung lop/hoc sinh, trong gio mo). */
+  ensureAssignmentUnlock:function(studentUid, testId, assignmentId, cb){
+    if(!this.ready || !this.auth || !this.auth.currentUser){ cb(true); return; }
+    var ref = this.db.collection('students').doc(studentUid).collection('unlocks').doc(testId);
+    ref.get().then(function(d){
+      if(d.exists){ cb(true); return; }
+      return ref.set({testId: testId, type: 'assignment', assignmentId: assignmentId, at: Date.now()}).then(function(){ cb(true); });
+    }).catch(function(e){ cb(false, e && e.message); });
+  },
   spendStudentCredit:function(studentUid, cost, reason, cb){
     if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
     var ref = this.db.collection('students').doc(studentUid);
@@ -54114,6 +54150,7 @@ if(self._suppressAuthRoute) return;
   isTestUnlockedFor:function(test, studentId){
     if(!test.isPremium) return true;
     var db = DB.get();
+    if(this.state.user && this.state.user.unlocked && this.state.user.unlocked[test.id]) return true;
     return db.submissions.some(function(s){return s.testId===test.id && s.studentId===studentId;});
   },
   /* Chuyen sang bat dong bo (callback) de co the tru tin dung AN TOAN qua Firestore Transaction
@@ -54132,17 +54169,18 @@ if(self._suppressAuthRoute) return;
     }
     var self = this;
     if(isCloudConfigured() && CloudDB.ready && student.id){
-      CloudDB.spendStudentCredit(student.id, cost, 'Mở khóa đề "'+test.title+'"', function(ok, info){
+      CloudDB.spendStudentCreditForTest(student.id, cost, 'Mở khóa đề "'+test.title+'"', test.id, function(ok, info){
         if(!ok){
           var msg = (info==='INSUFFICIENT_CREDIT')
             ? '💎 Số dư tín dụng trên Cloud không đủ (có thể vừa dùng ở thiết bị khác) — hãy tải lại trang và thử lại.'
-            : ('⚠️ Không trừ được tín dụng: '+info);
+            : ('⚠️ Không mở khóa được đề: '+info+((String(info).indexOf('permission')>=0)?' (đề có thể đã được mở khóa ở thiết bị khác — hãy tải lại trang).':''));
           self.showToast(msg, 'error');
           cb(false);
           return;
         }
         student.credits = info.newBalance;
         student.creditLog = info.newLog;
+        student.unlocked = student.unlocked || {}; student.unlocked[test.id] = true;
         self.showToast('💎 Đã dùng '+cost+' tín dụng để mở khóa đề "'+test.title+'". Số dư còn lại: '+student.credits+' tín dụng.', 'success');
         cb(true);
       });
@@ -54742,14 +54780,19 @@ if(self._suppressAuthRoute) return;
     var a = db.assignments.find(function(x){return x.id===assignmentId;});
     var now = Date.now();
     if(now<a.openAt || now>a.closeAt){ alert('Bài thi hiện không mở.'); return; }
-    var sub = db.submissions.find(function(s){return s.assignmentId===assignmentId && s.studentId===student.id;});
-    if(!sub){
-      sub = {id:uid('sub'), assignmentId:assignmentId, testId:a.testId, studentId:student.id, answers:{}, startTime:now, submitTime:null, status:'in-progress'};
-      db.submissions.push(sub);
-      DB.save();
-      this.syncSubmissionToCloud(sub);
-    }
-    this.goto('studentExam', {submissionId:sub.id});
+    var self = this;
+    CloudDB.ensureAssignmentUnlock(student.id, a.testId, a.id, function(okU, errU){
+      if(!okU){ self.showToast('⚠️ Không mở được bài thi: '+errU, 'error'); return; }
+      if(student.unlocked) student.unlocked[a.testId] = true;
+      var sub = db.submissions.find(function(s){return s.assignmentId===assignmentId && s.studentId===student.id;});
+      if(!sub){
+        sub = {id:uid('sub'), assignmentId:assignmentId, testId:a.testId, studentId:student.id, answers:{}, startTime:now, submitTime:null, status:'in-progress'};
+        db.submissions.push(sub);
+        DB.save();
+        self.syncSubmissionToCloud(sub);
+      }
+      self.goto('studentExam', {submissionId:sub.id});
+    });
   },
 
   examTimerInterval:null,
