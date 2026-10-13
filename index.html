@@ -55204,6 +55204,23 @@ var App = {
     '</div>';
   },
 
+  renderModelAnswer:function(q,test){
+    if(!test||test.subject!=='literature') return '';
+    var ex=q&&q.explanation?String(q.explanation).trim():'';
+    if(!ex) return '';
+    var isEssay=(q.type==='essay'||q.type==='writingAuto');
+    var lines=ex.split('\n').map(function(ln){
+      var t=ln.trim();
+      if(!t) return '<div style="height:8px"></div>';
+      var isHead=(t===t.toUpperCase()&&t!==t.toLowerCase()&&t.length<90);
+      if(isHead) return '<div style="font-weight:700;margin-top:10px;color:#0f766e">'+esc(t)+'</div>';
+      return '<div style="margin:3px 0;line-height:1.6">'+esc(t)+'</div>';
+    }).join('');
+    return '<details'+(isEssay?' open':'')+' style="margin-top:12px;border:1px solid #99f6e4;background:#f0fdfa;border-radius:10px;padding:10px 14px">'+
+      '<summary style="cursor:pointer;font-weight:700;color:#0f766e">'+(isEssay?'📝 Thang điểm & bài mẫu':'💡 Giải thích đáp án')+'</summary>'+
+      '<div style="margin-top:8px;font-size:14.5px;color:#134e4a">'+lines+'</div></details>';
+  },
+
   renderStudentResultDetail:function(){
     var db = DB.get();
     var wantedSubId = this.state.params.submissionId;
@@ -55253,7 +55270,7 @@ var App = {
       }
       return '<div class="qcard"><div class="qmeta"><span class="tag-pill">Câu '+(idx+1)+'</span><span class="tag-pill">'+q.points+' điểm</span>'+
         '<button type="button" class="speak-btn" title="Đọc to câu hỏi" onclick="App.speak(this.closest(\'.qcard\'))">🔊</button></div>'+
-        '<div class="qtext">'+nl2br(q.content)+'</div>'+questionImagesHtml(q)+body+'</div>';
+        '<div class="qtext">'+nl2br(q.content)+'</div>'+questionImagesHtml(q)+body+App.renderModelAnswer(q,test)+'</div>';
     }).join('');
     var celebrateHtml = '';
     if(sub.status==='graded' && sub.maxScore>0){
