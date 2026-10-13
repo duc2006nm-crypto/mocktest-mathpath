@@ -55205,7 +55205,7 @@ var App = {
   },
 
   renderModelAnswer:function(q,test){
-    if(!test||test.subject!=='literature') return '';
+    if(!test) return '';
     var ex=q&&q.explanation?String(q.explanation).trim():'';
     if(!ex) return '';
     var isEssay=(q.type==='essay'||q.type==='writingAuto');
