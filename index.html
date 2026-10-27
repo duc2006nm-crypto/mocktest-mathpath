@@ -3246,19 +3246,27 @@ if(self._suppressAuthRoute) return;
   },
 
   /* ================= TÀI LIỆU HỌC (thêm bởi Claude) =================
-     Danh sách tài liệu dùng CHUNG cho toàn bộ học sinh (không phân loại theo lớp/môn) — giáo
-     viên gửi tài liệu trước/sau buổi học, học sinh vào xem/tải. Mỗi tài liệu có thể có file
-     tải lên Firebase Storage VÀ/HOẶC một đường link ngoài (Google Drive...), dùng cái nào
-     cũng được, dùng cả hai cũng được. */
+     Danh sách tài liệu giáo viên gửi cho học sinh — mặc định dùng CHUNG cho TẤT CẢ học sinh,
+     nhưng giáo viên có thể chọn gửi riêng cho 1 LỚP cụ thể (field targetClassId — rỗng/không có
+     nghĩa là gửi chung). Học sinh tự đăng ký (không thuộc lớp nào) chỉ thấy các tài liệu gửi
+     chung, không thấy tài liệu riêng theo lớp. Mỗi tài liệu có thể có file tải lên Firebase
+     Storage VÀ/HOẶC một đường link ngoài (Google Drive...), dùng cái nào cũng được, dùng cả
+     hai cũng được. */
   renderMaterials:function(){
     var db = DB.get();
     var list = (db.materials||[]).slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    var classById = {}; (db.classes||[]).forEach(function(c){ classById[c.id]=c; });
     var rows = list.map(function(m){
       var linkBtns = ''+
         (m.fileUrl ? '<a class="btn btn-sm btn-outline" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener">📄 File'+(m.fileName?': '+esc(m.fileName):'')+'</a> ' : '')+
         (m.externalUrl ? '<a class="btn btn-sm btn-outline" href="'+esc(m.externalUrl)+'" target="_blank" rel="noopener">🔗 Link ngoài</a>' : '');
+      var cls = m.targetClassId ? classById[m.targetClassId] : null;
+      var targetBadge = m.targetClassId
+        ? '<span class="badge badge-blue">'+(cls?esc(cls.name):'⚠️ Lớp đã xóa')+'</span>'
+        : '<span class="badge badge-gray">Tất cả học sinh</span>';
       return '<tr>'+
         '<td><b>'+esc(m.title)+'</b>'+(m.description?'<div class="hint" style="margin-top:4px">'+esc(m.description)+'</div>':'')+'</td>'+
+        '<td>'+targetBadge+'</td>'+
         '<td>'+fmtDateTime(m.createdAt)+'</td>'+
         '<td>'+(linkBtns||'<span class="hint">— chưa có file/link —</span>')+'</td>'+
         '<td>'+
@@ -3268,11 +3276,11 @@ if(self._suppressAuthRoute) return;
       '</tr>';
     }).join('');
     return ''+
-      '<div class="topbar"><div><h2>📁 Tài liệu học</h2><div class="sub">Gửi tài liệu học tập cho TOÀN BỘ học sinh — mọi học sinh thấy chung một danh sách, không chia theo lớp/môn.</div></div>'+
+      '<div class="topbar"><div><h2>📁 Tài liệu học</h2><div class="sub">Gửi tài liệu học tập cho học sinh — chọn gửi chung cho tất cả, hoặc riêng theo từng lớp.</div></div>'+
       '<div><button class="btn btn-primary" onclick="App.openMaterialModal()">+ Thêm tài liệu</button></div></div>'+
       (!(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin) ? '<div class="card"><div class="empty-state">⚠️ Bạn cần đăng nhập Admin Cloud để thêm/sửa/xóa tài liệu — tài liệu được lưu trên Cloud để MỌI học sinh (mọi thiết bị) đều thấy.</div></div>' : '')+
       '<div class="card"><h3>Danh sách tài liệu ('+list.length+')</h3>'+
-      (list.length ? '<div class="table-wrap"><table><thead><tr><th>Tài liệu</th><th>Ngày gửi</th><th>File / Link</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+      (list.length ? '<div class="table-wrap"><table><thead><tr><th>Tài liệu</th><th>Gửi cho</th><th>Ngày gửi</th><th>File / Link</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
         : '<div class="empty-state">Chưa có tài liệu nào. Bấm "+ Thêm tài liệu" để gửi tài liệu đầu tiên cho học sinh.</div>')+
       '</div>';
   },
@@ -3282,6 +3290,8 @@ if(self._suppressAuthRoute) return;
     this._pendingMaterialFileUrl = null; this._pendingMaterialFileName = null; this._pendingMaterialFileSize = null;
     this._materialModalId = materialId || uid('mat');
     var cloudOk = isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin;
+    var classOptions = '<option value="">— Tất cả học sinh (gửi chung) —</option>'+
+      (db.classes||[]).map(function(c){ return '<option value="'+c.id+'" '+(m&&m.targetClassId===c.id?'selected':'')+'>'+esc(c.name)+'</option>'; }).join('');
     var html = ''+
       '<h3>'+(m?'Sửa tài liệu':'Thêm tài liệu học')+'</h3>'+
       (!cloudOk ? '<div class="hint" style="margin-bottom:10px">⚠️ Bạn cần đăng nhập Admin Cloud để thêm/sửa tài liệu (tài liệu được lưu trên Cloud để mọi học sinh đều thấy).</div>' : '')+
@@ -3290,6 +3300,9 @@ if(self._suppressAuthRoute) return;
         '<input type="text" name="title" required value="'+esc(m?m.title:'')+'" placeholder="VD: Tài liệu ôn tập buổi 5 - Chương Lực và chuyển động">'+
         '<label>Mô tả ngắn (không bắt buộc)</label>'+
         '<textarea name="description" rows="2" placeholder="VD: Đọc trước phần 1-2 trước buổi học tới.">'+esc(m?m.description||'':'')+'</textarea>'+
+        '<label style="margin-top:14px">Gửi cho</label>'+
+        '<select name="targetClassId">'+classOptions+'</select>'+
+        '<div class="hint" style="margin-top:4px">Học sinh tự đăng ký (không có lớp) chỉ thấy được tài liệu "gửi chung", không thấy tài liệu gửi riêng theo lớp.</div>'+
         '<label style="margin-top:14px">Tải file lên (PDF, Word, ảnh...)'+(cloudOk?'':' — cần đăng nhập Admin Cloud')+'</label>'+
         '<input type="file" '+(cloudOk?'':'disabled')+' onchange="App.handleMaterialFileSelect(event)">'+
         '<div id="materialFileStatus" class="hint" style="margin-top:6px">'+(m&&m.fileUrl?('✅ Đã có file: '+esc(m.fileName||'(không rõ tên)')):'Chưa chọn file.')+'</div>'+
@@ -3333,6 +3346,7 @@ if(self._suppressAuthRoute) return;
     var title = f.title.value.trim();
     var description = f.description.value.trim();
     var externalUrl = f.externalUrl.value.trim();
+    var targetClassId = f.targetClassId.value;
     if(!title){ alert('Vui lòng nhập tiêu đề.'); return false; }
     var db = DB.get();
     db.materials = db.materials || [];
@@ -3345,6 +3359,7 @@ if(self._suppressAuthRoute) return;
     m.title = title;
     m.description = description;
     m.externalUrl = externalUrl;
+    m.targetClassId = targetClassId || null;
     if(this._pendingMaterialFileUrl){
       m.fileUrl = this._pendingMaterialFileUrl;
       m.fileName = this._pendingMaterialFileName;
@@ -3356,7 +3371,12 @@ if(self._suppressAuthRoute) return;
     if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
       CloudDB.saveMaterial(m, function(ok, info){
         if(!ok) self.showToast('⚠️ Không đồng bộ được tài liệu lên Cloud: '+info, 'error');
-        else self.showToast(isNew ? '✅ Đã thêm tài liệu — học sinh đã có thể xem/tải.' : '✅ Đã lưu thay đổi.', 'success');
+        else{
+          var db2 = DB.get();
+          var clsName = m.targetClassId ? (db2.classes.find(function(c){return c.id===m.targetClassId;})||{}).name : null;
+          var whoMsg = clsName ? ('học sinh lớp '+clsName+' đã có thể xem/tải.') : 'tất cả học sinh đã có thể xem/tải.';
+          self.showToast(isNew ? ('✅ Đã thêm tài liệu — '+whoMsg) : '✅ Đã lưu thay đổi.', 'success');
+        }
       });
     } else {
       self.showToast('⚠️ Bạn chưa đăng nhập Admin Cloud nên học sinh sẽ KHÔNG thấy được tài liệu này.', 'error');
@@ -3375,16 +3395,26 @@ if(self._suppressAuthRoute) return;
       });
     }
   },
-  /* Giao diện học sinh: chỉ xem + mở/tải xuống, không chỉnh sửa gì. */
+  /* Giao diện học sinh: chỉ xem + mở/tải xuống, không chỉnh sửa gì. CHỈ thấy tài liệu "gửi
+     chung" (targetClassId rỗng) HOẶC tài liệu gửi riêng cho ĐÚNG lớp của mình. Học sinh tự
+     đăng ký (không có lớp) chỉ thấy tài liệu gửi chung. */
   renderStudentMaterials:function(){
     var db = DB.get();
-    var list = (db.materials||[]).slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    var myClassId = (this.state.user && this.state.user.classId) || null;
+    var list = (db.materials||[]).filter(function(m){
+      return !m.targetClassId || m.targetClassId === myClassId;
+    }).sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    var classById = {}; (db.classes||[]).forEach(function(c){ classById[c.id]=c; });
     var cards = list.map(function(m){
       var links = ''+
         (m.fileUrl ? '<a class="btn btn-primary btn-sm" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener">⬇️ Tải / Xem file'+(m.fileName?' ('+esc(m.fileName)+')':'')+'</a> ' : '')+
         (m.externalUrl ? '<a class="btn btn-outline btn-sm" href="'+esc(m.externalUrl)+'" target="_blank" rel="noopener">🔗 Mở link</a>' : '');
+      var cls = m.targetClassId ? classById[m.targetClassId] : null;
+      var targetBadge = m.targetClassId
+        ? '<span class="badge badge-blue">'+(cls?esc(cls.name):'')+'</span>'
+        : '<span class="badge badge-gray">Gửi chung</span>';
       return '<div class="card" style="margin-bottom:12px">'+
-        '<h3 style="margin-bottom:4px">'+esc(m.title)+'</h3>'+
+        '<h3 style="margin-bottom:4px">'+esc(m.title)+' '+targetBadge+'</h3>'+
         '<div class="hint" style="margin-bottom:8px">'+fmtDateTime(m.createdAt)+'</div>'+
         (m.description ? '<div style="margin-bottom:10px">'+esc(m.description)+'</div>' : '')+
         '<div>'+(links||'<span class="hint">— chưa có file/link —</span>')+'</div>'+
