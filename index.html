@@ -1625,6 +1625,70 @@ var CloudDB = {
       });
     }).then(function(result){ cb(true, result); })
     .catch(function(e){ cb(false, e && e.message); });
+  },
+
+  /* ============ TÀI LIỆU HỌC (thêm bởi Claude) ============
+     Danh sách tài liệu học tập giáo viên gửi cho học sinh. KHÔNG phân loại theo lớp/môn —
+     mọi học sinh (kể cả học sinh tự đăng ký) đều thấy chung MỘT danh sách duy nhất, mới nhất
+     lên trước. Document collection 'materials': {id, title, description, fileUrl, fileName,
+     fileSize, externalUrl, createdAt}. Đọc: bất kỳ ai đã đăng nhập (giáo viên + học sinh —
+     giống hệt cách 'assignments' đang hoạt động). Ghi/Xóa: chỉ Admin Cloud (giáo viên). */
+  fetchMaterials:function(cb){
+    if(!this.ready){ cb([]); return; }
+    var self = this;
+    function collectFrom(snap){
+      var arr = [];
+      snap.forEach(function(doc){
+        var data = desanitizeArraysFromFirestore(doc.data());
+        data.id = doc.id;
+        arr.push(data);
+      });
+      return arr;
+    }
+    this.db.collection('materials').orderBy('createdAt','desc').get().then(function(snap){
+      cb(collectFrom(snap));
+    }).catch(function(e){
+      /* Co the do thieu index cho orderBy — thu lai khong sap xep tren Cloud roi sap xep tai cho. */
+      console.error('CloudDB.fetchMaterials lỗi:', e);
+      self.db.collection('materials').get().then(function(snap){
+        var arr = collectFrom(snap);
+        arr.sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+        cb(arr);
+      }).catch(function(e2){ console.error('CloudDB.fetchMaterials (fallback) lỗi:', e2); cb([]); });
+    });
+  },
+  saveMaterial:function(material, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    var data = JSON.parse(JSON.stringify(material));
+    delete data.source;
+    data = sanitizeArraysForFirestore(data);
+    this.db.collection('materials').doc(material.id).set(data, {merge:true}).then(function(){ cb(true, material.id); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  deleteMaterial:function(materialId, cb){
+    if(!this.ready){ cb(false,'Cloud chưa được cấu hình.'); return; }
+    if(!this.currentAdmin){ cb(false,'Bạn chưa đăng nhập Admin Cloud.'); return; }
+    this.db.collection('materials').doc(materialId).delete().then(function(){ cb(true); }).catch(function(e){ cb(false, e && e.message); });
+  },
+  /* Tải file tài liệu (PDF/Word/ảnh...) lên Firebase Storage — chỉ Admin Cloud. Giống hệt
+     uploadAudio() ở trên nhưng lưu vào thư mục 'materials/' riêng. Trả về URL tải xuống. */
+  uploadMaterialFile:function(file, materialId, onProgress){
+    var self = this;
+    return new Promise(function(resolve, reject){
+      if(!self.ready || !self.storage){ reject(new Error('Cloud Storage chưa sẵn sàng.')); return; }
+      if(!self.currentAdmin){ reject(new Error('Bạn chưa đăng nhập Admin Cloud.')); return; }
+      var safeName = String(file.name||'tailieu').replace(/[^a-zA-Z0-9._-]/g,'_');
+      var path = 'materials/'+(materialId||'tmp')+'/'+Date.now()+'_'+safeName;
+      var ref = self.storage.ref().child(path);
+      var task = ref.put(file);
+      task.on('state_changed', function(snap){
+        if(onProgress && snap.totalBytes) onProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100));
+      }, function(err){
+        reject(err);
+      }, function(){
+        task.snapshot.ref.getDownloadURL().then(function(url){ resolve(url); }, reject);
+      });
+    });
   }
 };
 
@@ -1693,6 +1757,13 @@ var DB = {
     var localOnly = (d.assignments||[]).filter(function(a){ return a.source!=='cloud'; });
     d.assignments = localOnly.concat(cloudAssignments||[]);
   },
+  /* Tài liệu học (thêm bởi Claude): luôn đồng bộ TOÀN BỘ từ Cloud — không có khái niệm
+     "tài liệu cục bộ" (chỉ Admin Cloud mới thêm được, xem CloudDB.saveMaterial). */
+  mergeCloudMaterials:function(cloudMaterials){
+    var d = this.data;
+    if(!d) return;
+    d.materials = cloudMaterials || [];
+  },
   mergeCloudSubmissions:function(cloudSubmissions){
     var d = this.data;
     if(!d) return;
@@ -1706,7 +1777,7 @@ var DB = {
     this.data = {
       teacher: {username:'admin', password:'admin123', name:'Giáo viên chủ nhiệm'},
       classes: [], students: [], bank: [], tests: [],
-      assignments: [], submissions: [], progress: {},
+      assignments: [], submissions: [], progress: {}, materials: [],
       seedFlags: {ketSampleV1:true, creditsV1:true, a2keyOfficialV1:true, a2kListeningRealImagesV1:true, ketSkillTagsV1:true, timeMultiplierV1:true, kangaroo2009EcolierV1:true, tdn2026V1:true, writingAutoV1:true, petB1V1:true, petSchoolsV1:true, kangaroo2025FelixV1:true, tdnPetT3V1:true, tdnPetT5V1:true, tdnPetT6V1:true, tdnPetT4V1:true, tdnKetT1V1:true, kangaroo2014FelixV1:true, kangaroo2017FelixV1:true, kangaroo2018FelixV1:true, kangaroo2019FelixV1:true, kangaroo2020FelixV1:true, kangaroo2022FelixV1:true, kangaroo2023FelixV1:true, azotaSet1V1:true, azotaSet2V1:true, azotaSet3V1:true, azotaSet4V1:true, azotaSet5V1:true, azotaSet6V1:true, azotaMockGradeTestsV1:true, azotaMockGrade3TestsV1:true}
     };
   },
@@ -1719,6 +1790,7 @@ var DB = {
     if(!d) return;
     if(!d.progress) d.progress = {};
     if(!d.seedFlags) d.seedFlags = {};
+    if(!d.materials) d.materials = []; /* Tài liệu học (thêm bởi Claude) */
     var changed = false;
     /* === CLOUD_LOAD_GATE_MIGRATE_V1 ===
        Neu da cau hinh Cloud, dat truoc cac co (flag) cua ~96 de thi "nang" (nhung goi ham
@@ -2322,7 +2394,7 @@ var App = {
   },
   retryHydrate:function(testId){ if(this._hydrating) delete this._hydrating[testId]; this.render(); },
   loadCloudContent:function(){
-var self = this; var pending = 2; var done = false;
+var self = this; var pending = 3; var done = false;
 self._contentReady = false;
 function fin(){
 if(--pending>0 || done) return;
@@ -2336,6 +2408,11 @@ self.render(); fin();
 });
 CloudDB.fetchAllAssignments(function(cloudAssignments){
 try{ DB.mergeCloudAssignments(cloudAssignments); }catch(err){ if(window.console) console.error(err); }
+self.render(); fin();
+});
+/* Tài liệu học (thêm bởi Claude): tải cùng lúc cho CẢ giáo viên và học sinh, giống assignments. */
+CloudDB.fetchMaterials(function(cloudMaterials){
+try{ DB.mergeCloudMaterials(cloudMaterials); }catch(err){ if(window.console) console.error(err); }
 self.render(); fin();
 });
 setTimeout(function(){ if(!done){ pending = 1; fin(); } }, 20000);
@@ -3166,6 +3243,156 @@ if(self._suppressAuthRoute) return;
       (allStudents.length ? '<div class="table-wrap"><table><thead><tr><th>Họ tên</th><th>Lớp</th><th>Tài khoản</th><th>Mật khẩu</th><th>Tín dụng</th><th></th></tr></thead><tbody>'+studentRows+'</tbody></table></div>'
         : '<div class="empty-state">'+(search?'Không tìm thấy học sinh phù hợp.':'Chưa có học sinh nào.')+'</div>')+
       '</div>';
+  },
+
+  /* ================= TÀI LIỆU HỌC (thêm bởi Claude) =================
+     Danh sách tài liệu dùng CHUNG cho toàn bộ học sinh (không phân loại theo lớp/môn) — giáo
+     viên gửi tài liệu trước/sau buổi học, học sinh vào xem/tải. Mỗi tài liệu có thể có file
+     tải lên Firebase Storage VÀ/HOẶC một đường link ngoài (Google Drive...), dùng cái nào
+     cũng được, dùng cả hai cũng được. */
+  renderMaterials:function(){
+    var db = DB.get();
+    var list = (db.materials||[]).slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    var rows = list.map(function(m){
+      var linkBtns = ''+
+        (m.fileUrl ? '<a class="btn btn-sm btn-outline" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener">📄 File'+(m.fileName?': '+esc(m.fileName):'')+'</a> ' : '')+
+        (m.externalUrl ? '<a class="btn btn-sm btn-outline" href="'+esc(m.externalUrl)+'" target="_blank" rel="noopener">🔗 Link ngoài</a>' : '');
+      return '<tr>'+
+        '<td><b>'+esc(m.title)+'</b>'+(m.description?'<div class="hint" style="margin-top:4px">'+esc(m.description)+'</div>':'')+'</td>'+
+        '<td>'+fmtDateTime(m.createdAt)+'</td>'+
+        '<td>'+(linkBtns||'<span class="hint">— chưa có file/link —</span>')+'</td>'+
+        '<td>'+
+          '<button class="btn btn-sm btn-outline" onclick="App.openMaterialModal(\''+m.id+'\')">Sửa</button> '+
+          '<button class="btn btn-sm btn-danger" onclick="App.deleteMaterialItem(\''+m.id+'\')">Xóa</button>'+
+        '</td>'+
+      '</tr>';
+    }).join('');
+    return ''+
+      '<div class="topbar"><div><h2>📁 Tài liệu học</h2><div class="sub">Gửi tài liệu học tập cho TOÀN BỘ học sinh — mọi học sinh thấy chung một danh sách, không chia theo lớp/môn.</div></div>'+
+      '<div><button class="btn btn-primary" onclick="App.openMaterialModal()">+ Thêm tài liệu</button></div></div>'+
+      (!(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin) ? '<div class="card"><div class="empty-state">⚠️ Bạn cần đăng nhập Admin Cloud để thêm/sửa/xóa tài liệu — tài liệu được lưu trên Cloud để MỌI học sinh (mọi thiết bị) đều thấy.</div></div>' : '')+
+      '<div class="card"><h3>Danh sách tài liệu ('+list.length+')</h3>'+
+      (list.length ? '<div class="table-wrap"><table><thead><tr><th>Tài liệu</th><th>Ngày gửi</th><th>File / Link</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+        : '<div class="empty-state">Chưa có tài liệu nào. Bấm "+ Thêm tài liệu" để gửi tài liệu đầu tiên cho học sinh.</div>')+
+      '</div>';
+  },
+  openMaterialModal:function(materialId){
+    var db = DB.get();
+    var m = materialId ? (db.materials||[]).find(function(x){return x.id===materialId;}) : null;
+    this._pendingMaterialFileUrl = null; this._pendingMaterialFileName = null; this._pendingMaterialFileSize = null;
+    this._materialModalId = materialId || uid('mat');
+    var cloudOk = isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin;
+    var html = ''+
+      '<h3>'+(m?'Sửa tài liệu':'Thêm tài liệu học')+'</h3>'+
+      (!cloudOk ? '<div class="hint" style="margin-bottom:10px">⚠️ Bạn cần đăng nhập Admin Cloud để thêm/sửa tài liệu (tài liệu được lưu trên Cloud để mọi học sinh đều thấy).</div>' : '')+
+      '<form onsubmit="return App.submitMaterialForm(event,\''+(materialId||'')+'\')">'+
+        '<label>Tiêu đề</label>'+
+        '<input type="text" name="title" required value="'+esc(m?m.title:'')+'" placeholder="VD: Tài liệu ôn tập buổi 5 - Chương Lực và chuyển động">'+
+        '<label>Mô tả ngắn (không bắt buộc)</label>'+
+        '<textarea name="description" rows="2" placeholder="VD: Đọc trước phần 1-2 trước buổi học tới.">'+esc(m?m.description||'':'')+'</textarea>'+
+        '<label style="margin-top:14px">Tải file lên (PDF, Word, ảnh...)'+(cloudOk?'':' — cần đăng nhập Admin Cloud')+'</label>'+
+        '<input type="file" '+(cloudOk?'':'disabled')+' onchange="App.handleMaterialFileSelect(event)">'+
+        '<div id="materialFileStatus" class="hint" style="margin-top:6px">'+(m&&m.fileUrl?('✅ Đã có file: '+esc(m.fileName||'(không rõ tên)')):'Chưa chọn file.')+'</div>'+
+        '<label style="margin-top:14px">Hoặc/thêm đường link ngoài (Google Drive, YouTube...)</label>'+
+        '<input type="url" name="externalUrl" value="'+esc(m?m.externalUrl||'':'')+'" placeholder="https://drive.google.com/...">'+
+        '<div class="modal-actions">'+
+          '<button type="button" class="btn" onclick="App.closeModal()">Hủy</button>'+
+          '<button type="submit" class="btn btn-primary">Lưu tài liệu</button>'+
+        '</div>'+
+      '</form>';
+    this.openModal(html);
+  },
+  handleMaterialFileSelect:function(e){
+    var file = e.target.files && e.target.files[0];
+    var status = document.getElementById('materialFileStatus');
+    this._pendingMaterialFileUrl = null; this._pendingMaterialFileName = null; this._pendingMaterialFileSize = null;
+    if(!file) return;
+    if(!(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin)){
+      if(status) status.textContent = '⚠️ Bạn cần đăng nhập Admin Cloud trước khi tải file lên.';
+      return;
+    }
+    var self = this;
+    if(status) status.textContent = '⏳ Đang tải file lên Cloud... 0%';
+    withTimeout(CloudDB.uploadMaterialFile(file, this._materialModalId, function(pct){
+      var s = document.getElementById('materialFileStatus');
+      if(s) s.textContent = '⏳ Đang tải file lên Cloud... '+pct+'% (đừng đóng cửa sổ)';
+    }), 30000, 'Tải lên Cloud quá 30 giây không phản hồi — kiểm tra Firebase Storage đã được bật cho project chưa (Firebase Console → Storage → "Get started").').then(function(url){
+      self._pendingMaterialFileUrl = url;
+      self._pendingMaterialFileName = file.name;
+      self._pendingMaterialFileSize = file.size;
+      var s2 = document.getElementById('materialFileStatus');
+      if(s2) s2.textContent = '☁️ Đã tải lên: '+file.name+' ('+Math.round(file.size/1024)+' KB) — bấm "Lưu tài liệu" để hoàn tất.';
+    }).catch(function(err){
+      var s3 = document.getElementById('materialFileStatus');
+      if(s3) s3.textContent = '⚠️ Tải lên thất bại: '+(err && err.message);
+    });
+  },
+  submitMaterialForm:function(e, materialId){
+    e.preventDefault();
+    var f = e.target;
+    var title = f.title.value.trim();
+    var description = f.description.value.trim();
+    var externalUrl = f.externalUrl.value.trim();
+    if(!title){ alert('Vui lòng nhập tiêu đề.'); return false; }
+    var db = DB.get();
+    db.materials = db.materials || [];
+    var m = materialId ? db.materials.find(function(x){return x.id===materialId;}) : null;
+    var isNew = !m;
+    if(isNew){
+      m = {id: this._materialModalId || uid('mat'), createdAt: Date.now()};
+      db.materials.unshift(m);
+    }
+    m.title = title;
+    m.description = description;
+    m.externalUrl = externalUrl;
+    if(this._pendingMaterialFileUrl){
+      m.fileUrl = this._pendingMaterialFileUrl;
+      m.fileName = this._pendingMaterialFileName;
+      m.fileSize = this._pendingMaterialFileSize;
+    }
+    if(!m.fileUrl && !m.externalUrl){ alert('Vui lòng tải file lên hoặc nhập đường link ngoài (ít nhất 1 trong 2).'); return false; }
+    this.closeModal(); this.render();
+    var self = this;
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      CloudDB.saveMaterial(m, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không đồng bộ được tài liệu lên Cloud: '+info, 'error');
+        else self.showToast(isNew ? '✅ Đã thêm tài liệu — học sinh đã có thể xem/tải.' : '✅ Đã lưu thay đổi.', 'success');
+      });
+    } else {
+      self.showToast('⚠️ Bạn chưa đăng nhập Admin Cloud nên học sinh sẽ KHÔNG thấy được tài liệu này.', 'error');
+    }
+    return false;
+  },
+  deleteMaterialItem:function(materialId){
+    if(!confirm('Xóa tài liệu này? Học sinh sẽ không còn thấy tài liệu này nữa.')) return;
+    var db = DB.get();
+    db.materials = (db.materials||[]).filter(function(m){return m.id!==materialId;});
+    this.closeModal(); this.render();
+    if(isCloudConfigured() && CloudDB.ready && CloudDB.currentAdmin){
+      var self = this;
+      CloudDB.deleteMaterial(materialId, function(ok, info){
+        if(!ok) self.showToast('⚠️ Không xoá được tài liệu trên Cloud: '+info, 'error');
+      });
+    }
+  },
+  /* Giao diện học sinh: chỉ xem + mở/tải xuống, không chỉnh sửa gì. */
+  renderStudentMaterials:function(){
+    var db = DB.get();
+    var list = (db.materials||[]).slice().sort(function(a,b){ return (b.createdAt||0)-(a.createdAt||0); });
+    var cards = list.map(function(m){
+      var links = ''+
+        (m.fileUrl ? '<a class="btn btn-primary btn-sm" href="'+esc(m.fileUrl)+'" target="_blank" rel="noopener">⬇️ Tải / Xem file'+(m.fileName?' ('+esc(m.fileName)+')':'')+'</a> ' : '')+
+        (m.externalUrl ? '<a class="btn btn-outline btn-sm" href="'+esc(m.externalUrl)+'" target="_blank" rel="noopener">🔗 Mở link</a>' : '');
+      return '<div class="card" style="margin-bottom:12px">'+
+        '<h3 style="margin-bottom:4px">'+esc(m.title)+'</h3>'+
+        '<div class="hint" style="margin-bottom:8px">'+fmtDateTime(m.createdAt)+'</div>'+
+        (m.description ? '<div style="margin-bottom:10px">'+esc(m.description)+'</div>' : '')+
+        '<div>'+(links||'<span class="hint">— chưa có file/link —</span>')+'</div>'+
+      '</div>';
+    }).join('');
+    return ''+
+      '<div class="topbar"><div><h2>📁 Tài liệu học</h2><div class="sub">Tài liệu giáo viên gửi cho cả lớp — xem hoặc tải xuống bên dưới.</div></div></div>'+
+      (list.length ? cards : '<div class="card"><div class="empty-state">Chưa có tài liệu nào được gửi.</div></div>');
   },
 
   /* ================= KHO ĐỀ THI (NGÂN HÀNG CÂU HỎI) ================= */
@@ -6492,7 +6719,8 @@ if(self._suppressAuthRoute) return;
         ['teacherBuildTest','📝','Tạo đề thi'],
         ['teacherTests','🗂️','Danh sách đề thi'],
         ['teacherAssign','📤','Giao bài'],
-        ['teacherResults','📊','Chấm bài & Kết quả']
+        ['teacherResults','📊','Chấm bài & Kết quả'],
+        ['teacherMaterials','📁','Tài liệu học']
       ];
       switch(s.view){
         case 'teacherDashboard': content=this.renderTeacherDashboard(); break;
@@ -6506,15 +6734,17 @@ if(self._suppressAuthRoute) return;
         case 'teacherResults': content=this.renderResults(); break;
         case 'teacherGradeDetail': content=this.renderGradeDetail(); activeView='teacherResults'; break;
         case 'teacherSpeaking': content=this.renderSpeakingScript(); activeView='teacherTests'; break;
+        case 'teacherMaterials': content=this.renderMaterials(); break;
         default: content=this.renderTeacherDashboard();
       }
     } else {
       var isExternalStudent = !!(this.state.user && this.state.user.selfRegistered);
       navItems = isExternalStudent
-        ? [ ['studentPractice','🎯','Kho đề luyện tập'], ['studentProfile','🌟','Hồ sơ học tập'] ]
+        ? [ ['studentPractice','🎯','Kho đề luyện tập'], ['studentMaterials','📁','Tài liệu học'], ['studentProfile','🌟','Hồ sơ học tập'] ]
         : [
             ['studentPractice','🎯','Luyện thi thử'],
             ['studentAssignments','📋','Bài kiểm tra được giao'],
+            ['studentMaterials','📁','Tài liệu học'],
             ['studentResults','📊','Kết quả của tôi'],
             ['studentProfile','🌟','Hồ sơ học tập']
           ];
@@ -6526,6 +6756,7 @@ if(self._suppressAuthRoute) return;
         case 'studentResults': content=this.renderStudentResults(); break;
         case 'studentResultDetail': content=this.renderStudentResultDetail(); activeView='studentResults'; break;
         case 'studentProfile': content=this.renderStudentProfile(); break;
+        case 'studentMaterials': content=this.renderStudentMaterials(); break;
         default: content=this.renderStudentPractice();
       }
     }
