@@ -1,0 +1,409 @@
+{
+ "title": "Test_GHK1_G5",
+ "grade": "5",
+ "resultVisibility": "immediate",
+ "questions": [
+  {
+   "choices": [
+    "306,47",
+    "306,407",
+    "360,407",
+    "306,0407"
+   ],
+   "correctIndex": 1,
+   "explanation": "Phần nguyên là 306; phần thập phân có 4 phần mười, 0 phần trăm, 7 phần nghìn nên viết là 306,407.",
+   "difficulty": "medium",
+   "chapter": "Dạng 1 – Đọc, viết số thập phân – Hàng và giá trị của chữ số",
+   "type": "mc",
+   "points": 2,
+   "id": "q_ghk1g5_01__test_ghk1g5mvuelqvh",
+   "grade": "5",
+   "subject": "maththinking",
+   "content": "Số thập phân gồm: ba trăm linh sáu đơn vị, bốn phần mười, bảy phần nghìn viết là:"
+  },
+  {
+   "content": "Giá trị của chữ số 8 trong số 25,683 là:",
+   "subject": "maththinking",
+   "points": 2,
+   "difficulty": "medium",
+   "explanation": "Trong số 25,683: chữ số 6 ở hàng phần mười, chữ số 8 ở hàng phần trăm, chữ số 3 ở hàng phần nghìn. Vậy giá trị của chữ số 8 là 8/100.",
+   "correctIndex": 0,
+   "chapter": "Dạng 1 – Đọc, viết số thập phân – Hàng và giá trị của chữ số",
+   "choices": [
+    "8/100",
+    "8/10",
+    "80",
+    "8/1000"
+   ],
+   "id": "q_ghk1g5_02__test_ghk1g5mvuelqvh",
+   "type": "mc",
+   "grade": "5"
+  },
+  {
+   "content": "Số \"bốn mươi hai phẩy không bảy\" viết là:",
+   "subject": "maththinking",
+   "points": 2,
+   "correctIndex": 0,
+   "chapter": "Dạng 1 – Đọc, viết số thập phân – Hàng và giá trị của chữ số",
+   "type": "mc",
+   "id": "q_ghk1g5_03__test_ghk1g5mvuelqvh",
+   "grade": "5",
+   "choices": [
+    "42,07",
+    "42,7",
+    "420,7",
+    "42,007"
+   ],
+   "difficulty": "medium",
+   "explanation": "Phần nguyên là 42; phần thập phân là \"không bảy\" nên có 0 phần mười và 7 phần trăm. Vậy viết là 42,07."
+  },
+  {
+   "explanation": "Làm tròn đến hàng phần trăm thì xét chữ số hàng phần nghìn. Chữ số đó là 5 (5 ≥ 5) nên cộng thêm 1 vào hàng phần trăm: 3,28 + 0,01 = 3,29.",
+   "difficulty": "medium",
+   "choices": [
+    "3,28",
+    "3,29",
+    "3,3",
+    "3,285"
+   ],
+   "chapter": "Dạng 2 – Làm tròn số thập phân",
+   "grade": "5",
+   "correctIndex": 1,
+   "content": "Làm tròn số 3,2857 đến hàng phần trăm ta được:",
+   "points": 2,
+   "type": "mc",
+   "subject": "maththinking",
+   "id": "q_ghk1g5_04__test_ghk1g5mvuelqvh"
+  },
+  {
+   "chapter": "Dạng 2 – Làm tròn số thập phân",
+   "explanation": "Làm tròn đến hàng phần mười thì xét chữ số hàng phần trăm. Chữ số đó là 7 (7 ≥ 5) nên cộng thêm 1 vào hàng phần mười: 15,3 + 0,1 = 15,4.",
+   "correctIndex": 3,
+   "difficulty": "medium",
+   "points": 2,
+   "id": "q_ghk1g5_05__test_ghk1g5mvuelqvh",
+   "grade": "5",
+   "choices": [
+    "15,3",
+    "15,37",
+    "15,5",
+    "15,4"
+   ],
+   "content": "Làm tròn số 15,372 đến hàng phần mười ta được:",
+   "subject": "maththinking",
+   "type": "mc"
+  },
+  {
+   "points": 2,
+   "type": "mc",
+   "chapter": "Dạng 3 – Hai đường thẳng song song – Hai đường thẳng vuông góc",
+   "choices": [
+    "Cạnh EF song song với cạnh GH",
+    "Cạnh EF vuông góc với cạnh FG",
+    "Cạnh FG song song với cạnh EH",
+    "Cạnh EF song song với cạnh FG"
+   ],
+   "difficulty": "medium",
+   "grade": "5",
+   "subject": "maththinking",
+   "content": "Cho hình vuông EFGH. Khẳng định nào sau đây SAI?",
+   "explanation": "Hình vuông có hai cạnh kề nhau thì vuông góc, hai cạnh đối diện thì song song. EF và FG là hai cạnh kề nên EF vuông góc với FG (không song song). Vậy khẳng định \"EF song song với FG\" là sai.",
+   "id": "q_ghk1g5_06__test_ghk1g5mvuelqvh",
+   "correctIndex": 3
+  },
+  {
+   "type": "mc",
+   "correctIndex": 2,
+   "subject": "maththinking",
+   "difficulty": "medium",
+   "content": "Vào lúc nào dưới đây, kim giờ và kim phút của đồng hồ tạo thành góc tù?",
+   "explanation": "Lúc \"n giờ đúng\" (n ≤ 6), hai kim tạo góc n × 30°. 1 giờ: 30° (góc nhọn); 3 giờ: 90° (góc vuông); 5 giờ: 150° (góc tù); 6 giờ: 180° (góc bẹt).",
+   "id": "q_ghk1g5_07__test_ghk1g5mvuelqvh",
+   "choices": [
+    "1 giờ đúng",
+    "3 giờ đúng",
+    "5 giờ đúng",
+    "6 giờ đúng"
+   ],
+   "grade": "5",
+   "points": 2,
+   "chapter": "Dạng 4 – Góc nhọn, góc vuông, góc tù, góc bẹt"
+  },
+  {
+   "chapter": "Dạng 4 – Góc nhọn, góc vuông, góc tù, góc bẹt",
+   "difficulty": "medium",
+   "points": 2,
+   "grade": "5",
+   "id": "q_ghk1g5_08__test_ghk1g5mvuelqvh",
+   "choices": [
+    "Góc nhọn",
+    "Góc vuông",
+    "Góc tù",
+    "Góc bẹt"
+   ],
+   "explanation": "Góc nhọn bé hơn 90°, góc vuông bằng 90°, góc bẹt bằng 180°. Góc 135° lớn hơn 90° và bé hơn 180° nên là góc tù.",
+   "content": "Góc có số đo 135° là góc nào dưới đây?",
+   "subject": "maththinking",
+   "correctIndex": 2,
+   "type": "mc"
+  },
+  {
+   "choices": [
+    "1,32",
+    "0,65",
+    "6,5",
+    "0,13"
+   ],
+   "grade": "5",
+   "difficulty": "medium",
+   "type": "mc",
+   "chapter": "Dạng 5 – Phân số thập phân – Số thập phân",
+   "explanation": "13/20 = (13 × 5)/(20 × 5) = 65/100 = 0,65.",
+   "id": "q_ghk1g5_09__test_ghk1g5mvuelqvh",
+   "correctIndex": 1,
+   "points": 2,
+   "subject": "maththinking",
+   "content": "Phân số 13/20 viết dưới dạng số thập phân là:"
+  },
+  {
+   "explanation": "Đổi về ki-lô-gam và viết cùng 3 chữ số ở phần thập phân: A 2,350 kg; B 2,050 kg; C 2,300 kg; D 2,305 kg. Số bé nhất là 2,050 nên túi B nhẹ nhất.",
+   "chapter": "Dạng 5 – Phân số thập phân – Số thập phân",
+   "points": 2,
+   "choices": [
+    "Túi B",
+    "Túi A",
+    "Túi C",
+    "Túi D"
+   ],
+   "content": "Bốn túi gạo cân nặng: túi A 2,35 kg; túi B 2 kg 50 g; túi C 2 300 g; túi D 2,305 kg. Túi nhẹ nhất là:",
+   "subject": "maththinking",
+   "type": "mc",
+   "grade": "5",
+   "id": "q_ghk1g5_10__test_ghk1g5mvuelqvh",
+   "difficulty": "medium",
+   "correctIndex": 0
+  },
+  {
+   "subject": "maththinking",
+   "type": "mc",
+   "content": "Số thích hợp điền vào chỗ chấm: 0,35 km² = … ha",
+   "correctIndex": 3,
+   "difficulty": "medium",
+   "id": "q_ghk1g5_11__test_ghk1g5mvuelqvh",
+   "points": 2,
+   "choices": [
+    "3,5 ha",
+    "350 ha",
+    "3 500 ha",
+    "35 ha"
+   ],
+   "explanation": "1 km² = 100 ha nên 0,35 km² = 0,35 × 100 = 35 ha.",
+   "grade": "5",
+   "chapter": "Dạng 6 – Đo lường"
+  },
+  {
+   "chapter": "Dạng 6 – Đo lường",
+   "grade": "5",
+   "difficulty": "medium",
+   "points": 2,
+   "correctIndex": 3,
+   "choices": [
+    "460",
+    "4 600",
+    "460 000",
+    "46 000"
+   ],
+   "type": "mc",
+   "id": "q_ghk1g5_12__test_ghk1g5mvuelqvh",
+   "subject": "maththinking",
+   "content": "Số thích hợp điền vào chỗ chấm: 4,6 ha = … m²",
+   "explanation": "1 ha = 10 000 m² nên 4,6 ha = 4,6 × 10 000 = 46 000 m²."
+  },
+  {
+   "correctIndex": 1,
+   "difficulty": "medium",
+   "chapter": "Dạng 6 – Đo lường",
+   "points": 2,
+   "explanation": "1 tấn = 1 000 kg nên 85 kg = 0,085 tấn. Vậy 7 tấn 85 kg = 7 + 0,085 = 7,085 tấn.",
+   "choices": [
+    "7,85 tấn",
+    "7,085 tấn",
+    "70,85 tấn",
+    "7,0085 tấn"
+   ],
+   "content": "Số thích hợp điền vào chỗ chấm: 7 tấn 85 kg = … tấn",
+   "subject": "maththinking",
+   "type": "mc",
+   "grade": "5",
+   "id": "q_ghk1g5_13__test_ghk1g5mvuelqvh"
+  },
+  {
+   "subject": "maththinking",
+   "content": "Giá trị của biểu thức 3/4 + 5/6 × 3/10 là:",
+   "points": 2,
+   "type": "mc",
+   "difficulty": "medium",
+   "grade": "5",
+   "chapter": "Dạng 7 – Tính giá trị biểu thức – Tính nhanh",
+   "explanation": "Nhân trước, cộng sau: 5/6 × 3/10 = 15/60 = 1/4; rồi 3/4 + 1/4 = 1.",
+   "id": "q_ghk1g5_14__test_ghk1g5mvuelqvh",
+   "choices": [
+    "1",
+    "19/40",
+    "113/60",
+    "5/4"
+   ],
+   "correctIndex": 0
+  },
+  {
+   "choices": [
+    "4/9",
+    "14/27",
+    "2/3",
+    "28/27"
+   ],
+   "difficulty": "medium",
+   "grade": "5",
+   "correctIndex": 2,
+   "type": "mc",
+   "chapter": "Dạng 7 – Tính giá trị biểu thức – Tính nhanh",
+   "id": "q_ghk1g5_15__test_ghk1g5mvuelqvh",
+   "points": 2,
+   "explanation": "Đặt thừa số chung 2/3: 2/3 × (7/9 + 2/9) = 2/3 × 1 = 2/3.",
+   "subject": "maththinking",
+   "content": "Tính nhanh: 2/3 × 7/9 + 2/3 × 2/9 = …"
+  },
+  {
+   "subject": "maththinking",
+   "points": 2,
+   "explanation": "Chia trước, trừ sau: 1/2 : 4/5 = 1/2 × 5/4 = 5/8; rồi 7/8 − 5/8 = 2/8 = 1/4.",
+   "content": "Giá trị của biểu thức 7/8 − 1/2 : 4/5 là:",
+   "id": "q_ghk1g5_16__test_ghk1g5mvuelqvh",
+   "type": "mc",
+   "correctIndex": 2,
+   "grade": "5",
+   "chapter": "Dạng 7 – Tính giá trị biểu thức – Tính nhanh",
+   "choices": [
+    "15/32",
+    "19/40",
+    "1/4",
+    "5/8"
+   ],
+   "difficulty": "medium"
+  },
+  {
+   "grade": "5",
+   "subject": "maththinking",
+   "type": "mc",
+   "content": "Tổng của hai số là 96, hiệu của hai số là 18. Số lớn là:",
+   "points": 2,
+   "difficulty": "medium",
+   "chapter": "Dạng 8 – Tìm hai số khi biết tổng và hiệu",
+   "correctIndex": 3,
+   "explanation": "Số lớn là: (96 + 18) : 2 = 57. (Số bé là 96 − 57 = 39; kiểm tra: 57 − 39 = 18.)",
+   "id": "q_ghk1g5_17__test_ghk1g5mvuelqvh",
+   "choices": [
+    "39",
+    "78",
+    "114",
+    "57"
+   ]
+  },
+  {
+   "explanation": "Số học sinh nữ là: 36 × 5/9 = 20 (học sinh). Số học sinh nam là: 36 − 20 = 16 (học sinh).",
+   "correctIndex": 0,
+   "content": "Một lớp có 36 học sinh, trong đó 5/9 số học sinh là học sinh nữ. Số học sinh nam của lớp là:",
+   "subject": "maththinking",
+   "choices": [
+    "16 học sinh",
+    "20 học sinh",
+    "32 học sinh",
+    "24 học sinh"
+   ],
+   "id": "q_ghk1g5_18__test_ghk1g5mvuelqvh",
+   "type": "mc",
+   "points": 2,
+   "difficulty": "medium",
+   "grade": "5",
+   "chapter": "Dạng 9 – Bài toán về phân số của một số"
+  },
+  {
+   "subject": "maththinking",
+   "points": 2,
+   "content": "Một khu vườn hình chữ nhật có nửa chu vi 56 m, chiều dài hơn chiều rộng 8 m. Diện tích khu vườn đó là:",
+   "type": "mc",
+   "difficulty": "medium",
+   "correctIndex": 2,
+   "grade": "5",
+   "chapter": "Dạng 10 – Hình chữ nhật: nửa chu vi, hiệu hai cạnh",
+   "choices": [
+    "896 m²",
+    "1 536 m²",
+    "768 m²",
+    "672 m²"
+   ],
+   "explanation": "Chiều dài: (56 + 8) : 2 = 32 (m). Chiều rộng: 32 − 8 = 24 (m). Diện tích: 32 × 24 = 768 (m²).",
+   "id": "q_ghk1g5_19__test_ghk1g5mvuelqvh"
+  },
+  {
+   "content": "Một hình chữ nhật có chiều rộng 12 cm, chiều dài bằng 3/2 chiều rộng. Chu vi hình chữ nhật đó là:",
+   "explanation": "Chiều dài là: 12 × 3/2 = 18 (cm). Chu vi là: (18 + 12) × 2 = 60 (cm).",
+   "subject": "maththinking",
+   "points": 2,
+   "id": "q_ghk1g5_20__test_ghk1g5mvuelqvh",
+   "difficulty": "medium",
+   "chapter": "Dạng 11 – Hình chữ nhật: cạnh cho bằng phân số, diện tích",
+   "correctIndex": 1,
+   "type": "mc",
+   "choices": [
+    "30 cm",
+    "60 cm",
+    "216 cm",
+    "48 cm"
+   ],
+   "grade": "5"
+  },
+  {
+   "chapter": "Dạng 9 – Bài toán về phân số của một số",
+   "points": 3,
+   "explanation": "THANG ĐIỂM VÀ BÀI GIẢI MẪU (3 ĐIỂM — mỗi ý 0,6 điểm)\n• Buổi sáng bán được: 480 × 3/8 = 180 (kg) (0,6 điểm)\n• Số gạo còn lại sau buổi sáng: 480 − 180 = 300 (kg) (0,6 điểm)\n• Buổi chiều bán được: 300 × 2/5 = 120 (kg) (0,6 điểm)\n• Cuối ngày cửa hàng còn lại: 300 − 120 = 180 (kg) (0,6 điểm)\n• Đáp số: 180 kg gạo. (0,6 điểm)\n\nLưu ý: học sinh giải cách khác mà đúng vẫn được điểm tối đa; thiếu hoặc sai tên đơn vị thì trừ 0,25 điểm.",
+   "id": "q_ghk1g5_21__test_ghk1g5mvuelqvh",
+   "type": "essay",
+   "content": "Một cửa hàng có 480 kg gạo. Buổi sáng cửa hàng bán được 3/8 số gạo, buổi chiều bán được 2/5 số gạo còn lại. Hỏi cuối ngày cửa hàng còn lại bao nhiêu ki-lô-gam gạo?",
+   "subject": "maththinking",
+   "difficulty": "medium",
+   "grade": "5"
+  },
+  {
+   "grade": "5",
+   "type": "essay",
+   "explanation": "THANG ĐIỂM VÀ BÀI GIẢI MẪU (3 ĐIỂM — mỗi ý 0,5 điểm)\n• Sau khi chuyển 15 tạ, tổng số thóc hai kho vẫn là 240 tạ và kho thứ hai nhiều hơn kho thứ nhất 10 tạ (0,5 điểm)\n• Lúc sau kho thứ hai có: (240 + 10) : 2 = 125 (tạ) (0,5 điểm)\n• Lúc sau kho thứ nhất có: 240 − 125 = 115 (tạ) (0,5 điểm)\n• Lúc đầu kho thứ nhất có: 115 + 15 = 130 (tạ) (0,5 điểm)\n• Lúc đầu kho thứ hai có: 125 − 15 = 110 (tạ) (0,5 điểm)\n• Đáp số: kho thứ nhất 130 tạ; kho thứ hai 110 tạ. (Thử lại: 130 + 110 = 240; 125 − 115 = 10.) (0,5 điểm)\n\nLưu ý: học sinh giải cách khác mà đúng vẫn được điểm tối đa; thiếu hoặc sai tên đơn vị thì trừ 0,25 điểm.",
+   "id": "q_ghk1g5_22__test_ghk1g5mvuelqvh",
+   "chapter": "Dạng 8 – Tìm hai số khi biết tổng và hiệu",
+   "difficulty": "medium",
+   "points": 3,
+   "subject": "maththinking",
+   "content": "Hai kho thóc chứa tất cả 240 tạ. Nếu chuyển 15 tạ từ kho thứ nhất sang kho thứ hai thì kho thứ hai nhiều hơn kho thứ nhất 10 tạ. Hỏi lúc đầu mỗi kho chứa bao nhiêu tạ thóc?"
+  },
+  {
+   "grade": "5",
+   "explanation": "THANG ĐIỂM VÀ BÀI GIẢI MẪU (3 ĐIỂM — mỗi ý 0,5 điểm)\n• a) Chiều dài thửa ruộng: 24 × 5/3 = 40 (m) (0,5 điểm)\n• a) Diện tích thửa ruộng: 40 × 24 = 960 (m²) (0,5 điểm)\n• b) Diện tích đào ao: 960 × 1/4 = 240 (m²) (0,5 điểm)\n• b) Diện tích đất cấy lúa: 960 − 240 = 720 (m²) (0,5 điểm)\n• b) Số ki-lô-gam lúa thu hoạch được: 720 : 10 × 7 = 504 (kg) (0,5 điểm)\n• Đáp số: a) 960 m²; b) 504 kg lúa. (0,5 điểm)\n\nLưu ý: học sinh giải cách khác mà đúng vẫn được điểm tối đa; thiếu hoặc sai tên đơn vị thì trừ 0,25 điểm.",
+   "chapter": "Dạng 11 – Hình chữ nhật: cạnh cho bằng phân số, diện tích",
+   "type": "essay",
+   "difficulty": "medium",
+   "id": "q_ghk1g5_23__test_ghk1g5mvuelqvh",
+   "points": 3,
+   "subject": "maththinking",
+   "content": "Một thửa ruộng hình chữ nhật có chiều rộng 24 m, chiều dài bằng 5/3 chiều rộng.\na) Tính diện tích thửa ruộng đó.\nb) Người ta dành 1/4 diện tích thửa ruộng để đào ao, phần đất còn lại để cấy lúa. Biết cứ 10 m² đất cấy lúa thu hoạch được 7 kg lúa. Hỏi trên phần đất cấy lúa thu hoạch được bao nhiêu ki-lô-gam lúa?"
+  }
+ ],
+ "isPremium": false,
+ "duration": 40,
+ "origTitle": "Đề kiểm tra ôn tập giữa học kì I – Toán lớp 5",
+ "isPractice": true,
+ "id": "test_ghk1g5mvuelqvh",
+ "createdAt": 1793330377037,
+ "subject": "maththinking",
+ "creditCost": 0,
+ "source": "cloud"
+}
