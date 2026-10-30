@@ -7275,6 +7275,84 @@ App.publishToGithub = function(){
   else document.addEventListener('DOMContentLoaded', addGithubButtons);
 })();
 </script>
+<script>
+/* ===== TIM KIEM DE THI trong "Danh sach de thi" (them 2026-10-30) ===== */
+(function(){
+  if(typeof App === 'undefined' || App.__testSearchInstalled) return;
+  App.__testSearchInstalled = true;
+  App.testSearchQuery = '';
+
+  /* Bo dau tieng Viet + chu thuong, de go "toan" van tim ra "Toán" */
+  function norm(s){
+    return String(s || '').toLowerCase().replace(/đ/g, 'd')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function applyFilter(){
+    var q = norm(App.testSearchQuery), words = q ? q.split(' ') : [];
+    var total = 0, shown = 0;
+    var cards = document.querySelectorAll('.main .card .table-wrap');
+    Array.prototype.forEach.call(cards, function(wrap){
+      var card = wrap.parentElement, rows = wrap.querySelectorAll('tbody tr'), cardShown = 0;
+      Array.prototype.forEach.call(rows, function(tr){
+        var cell = tr.querySelector('td');
+        var text = norm(cell ? cell.textContent : tr.textContent);
+        var ok = words.every(function(w){ return text.indexOf(w) !== -1; });
+        tr.style.display = ok ? '' : 'none';
+        total++; if(ok){ shown++; cardShown++; }
+      });
+      card.style.display = (words.length && !cardShown) ? 'none' : '';
+      var badge = card.querySelector('h4 .badge');
+      if(badge){
+        if(badge.getAttribute('data-orig') === null) badge.setAttribute('data-orig', badge.textContent);
+        badge.textContent = words.length ? (cardShown + '/' + rows.length + ' đề') : badge.getAttribute('data-orig');
+      }
+    });
+    var info = document.getElementById('testSearchInfo');
+    if(info){
+      info.textContent = !words.length ? (total + ' đề')
+        : (shown ? ('Tìm thấy ' + shown + '/' + total + ' đề') : 'Không tìm thấy đề nào khớp "' + App.testSearchQuery.trim() + '"');
+      info.style.color = (words.length && !shown) ? '#dc2626' : '';
+    }
+  }
+
+  function setupBar(){
+    var main = document.querySelector('.main');
+    if(!main) return;
+    var old = document.getElementById('testSearchBar');
+    if(old) old.parentNode.removeChild(old);
+    var bar = document.createElement('div');
+    bar.id = 'testSearchBar';
+    bar.className = 'card';
+    bar.style.cssText = 'position:sticky;top:0;z-index:20;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;margin-bottom:12px';
+    bar.innerHTML = '<span style="font-size:18px">🔍</span>' +
+      '<input id="testSearchInput" type="search" autocomplete="off" placeholder="Tìm đề theo tên… (vd: Phân số, GHK1, PET Test 2 — không cần gõ dấu)" ' +
+      'style="flex:1;min-width:220px;padding:9px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:15px;background:transparent;color:inherit">' +
+      '<button type="button" id="testSearchClear" class="btn btn-sm btn-outline">✕ Xóa</button>' +
+      '<span id="testSearchInfo" class="hint"></span>';
+    var topbar = main.querySelector('.topbar');
+    if(topbar && topbar.parentNode === main) main.insertBefore(bar, topbar.nextSibling);
+    else main.insertBefore(bar, main.firstChild);
+    var input = document.getElementById('testSearchInput');
+    input.value = App.testSearchQuery;
+    input.addEventListener('input', function(){ App.testSearchQuery = input.value; applyFilter(); });
+    input.addEventListener('keydown', function(e){ if(e.key === 'Escape'){ input.value = ''; App.testSearchQuery = ''; applyFilter(); } });
+    document.getElementById('testSearchClear').addEventListener('click', function(){
+      input.value = ''; App.testSearchQuery = ''; applyFilter(); input.focus();
+    });
+    applyFilter();
+  }
+
+  /* Sau moi lan ve lai man hinh "Danh sach de thi" thi gan lai o tim kiem (va giu nguyen tu khoa dang go) */
+  var origRender = App.render;
+  App.render = function(){
+    var r = origRender.apply(this, arguments);
+    try{ if(this.state && this.state.view === 'teacherTests') setupBar(); }
+    catch(err){ if(window.console) console.error('Loi o tim kiem de:', err); }
+    return r;
+  };
+})();
+</script>
 <!-- DIEM KET THUC BAT BUOC: neu ban dang doc thay dong nay bi thieu / file dung
      truoc dong nay thi index.html DA BI CAT CUT - dung dung file, khoi phuc tu
      ban .autobak-*/.bak-* moi nhat truoc khi lam gi tiep. -->
