@@ -5327,7 +5327,7 @@ if(self._suppressAuthRoute) return;
     // Kangaroo (co nam thi trong origTitle) theo nam tang dan; cac de khac (TIMO/Azota...) giu
     // nguyen thu tu goc va dung truoc trong danh sach (nam=0 khi sap xep).
     var mathFolderOrder = (categoryId==='maththinking' && needsGrade && chosenGrade)
-      ? tests.slice().sort(function(a,b){ return kangarooYear(a.origTitle)-kangarooYear(b.origTitle); })
+      ? tests.slice().sort(function(a,b){ var amcA=/^AMC\s*8/i.test(a.origTitle||'')?1:0, amcB=/^AMC\s*8/i.test(b.origTitle||'')?1:0; if(amcA!==amcB) return amcA-amcB; return kangarooYear(a.origTitle)-kangarooYear(b.origTitle); })
       : null;
     // Neu co danh so rieng theo folder thi hien thi danh sach THEO DUNG thu tu so do (1,2,3...),
     // khong giu thu tu chen ban dau nua (tranh hien thi lon xon "De so 1, 5, 9, 2...").
